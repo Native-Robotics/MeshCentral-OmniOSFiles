@@ -1,0 +1,26 @@
+{
+  "name": "OmniOS Files",
+  "shortName": "omniosfiles",
+  "version": "1.0.0",
+  "author": "Native Robotics",
+  "description": "Restricted file browser for /var/nr directory with full file operations support",
+  "hasAdminPanel": false,
+  "homepage": "https://github.com/Native-Robotics/MeshCentral-OmniOSFiles",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Native-Robotics/MeshCentral-OmniOSFiles.git"
+  },
+  "meshCentralCompat": ">=1.1.35",
+  "settings": {
+    "basePath": "/var/nr",
+    "runAsUser": "user",
+    "runAsGroup": "user",
+    "filterMode": "blacklist",
+    "allowedExtensions": [],
+    "blockedExtensions": [".exe", ".bat", ".cmd", ".com", ".scr", ".pif"],
+    "maxFileSize": 3221225472,
+    "chunkSize": 65536,
+    "enableChecksum": true,
+    "maxConcurrentTransfers": 3
+  }
+}
