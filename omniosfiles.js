@@ -358,15 +358,24 @@ module.exports.omniosfiles = function(parent) {
      * Called when device panel refreshes - initializes the plugin
      */
     obj.onDeviceRefreshEnd = function() {
-        if (typeof document === 'undefined') return;
-        if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) return;
+        console.log('[omniosfiles] onDeviceRefreshEnd called');
+        if (typeof document === 'undefined') { console.log('[omniosfiles] document undefined'); return; }
+        if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) { 
+            console.log('[omniosfiles] currentNode undefined or no _id'); 
+            return; 
+        }
+        console.log('[omniosfiles] currentNode._id:', currentNode._id);
         
         // Register plugin tab if not already registered
         if (typeof pluginHandler !== 'undefined' && typeof pluginHandler.registerPluginTab === 'function') {
+            console.log('[omniosfiles] Registering plugin tab...');
             pluginHandler.registerPluginTab({
                 tabId: 'omniosfiles',
                 tabTitle: 'OmniOS Files'
             });
+            console.log('[omniosfiles] Plugin tab registered');
+        } else {
+            console.log('[omniosfiles] pluginHandler.registerPluginTab not available');
         }
         
         // Initialize state
@@ -399,13 +408,16 @@ module.exports.omniosfiles = function(parent) {
         
         // Populate the tab content
         var tabDiv = document.getElementById('omniosfiles');
+        console.log('[omniosfiles] tabDiv:', tabDiv);
         if (tabDiv && !tabDiv.querySelector('#omniosfiles-container')) {
+            console.log('[omniosfiles] Populating tab content...');
             tabDiv.innerHTML = pluginHandler.omniosfiles.getPluginTabContent();
         }
         
         // Refresh file list after a short delay
         setTimeout(function() {
             if (document.getElementById('omniosfiles-container')) {
+                console.log('[omniosfiles] Refreshing file list...');
                 pluginHandler.omniosfiles.refresh();
             }
         }, 100);
