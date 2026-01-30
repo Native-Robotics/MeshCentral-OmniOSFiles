@@ -31,7 +31,8 @@ module.exports.omniosfiles = function(parent) {
         'uploadAck',
         'uploadComplete',
         'uploadError',
-        'uploadCancelled'
+        'uploadCancelled',
+        'getSettings'
     ];
     
     /**
@@ -51,11 +52,19 @@ module.exports.omniosfiles = function(parent) {
                 allowedExtensions: [],
                 blockedExtensions: ['.exe', '.bat', '.cmd', '.com', '.scr', '.pif'],
                 maxFileSize: 3221225472,
+                chunkSize: 65536,
                 enableChecksum: true
             };
         }
         
         return obj.settings;
+    };
+    
+    /**
+     * Get settings for frontend
+     */
+    obj.getSettings = function() {
+        return obj.loadSettings();
     };
     
     /**
@@ -284,93 +293,58 @@ module.exports.omniosfiles = function(parent) {
      * Generate tab HTML content
      */
     obj.getTabContent = function() {
-        var settings = obj.loadSettings();
-        
-        return `
-<div id="omniosfiles-container" style="height: 100%; display: flex; flex-direction: column;">
-    <!-- Toolbar -->
-    <div id="omniosfiles-toolbar" style="padding: 8px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-        <button id="omniosfiles-btn-refresh" onclick="return pluginHandler.omniosfiles.refresh();" title="Refresh">🔄 Refresh</button>
-        <button id="omniosfiles-btn-upload" onclick="return pluginHandler.omniosfiles.showUploadDialog();" title="Upload File">⬆️ Upload</button>
-        <button id="omniosfiles-btn-newdir" onclick="return pluginHandler.omniosfiles.showNewDirDialog();" title="New Folder">📁+ New Folder</button>
-        <span style="flex-grow: 1;"></span>
-        <span id="omniosfiles-status" style="color: #666; font-size: 12px;"></span>
-    </div>
-    
-    <!-- Breadcrumb navigation -->
-    <div id="omniosfiles-breadcrumb" style="padding: 8px; background: #fafafa; border-bottom: 1px solid #eee; font-size: 13px;">
-        <span style="color: #666;">📂</span> <a href="#" onclick="return pluginHandler.omniosfiles.navigateTo('/');">/</a>
-    </div>
-    
-    <!-- File list -->
-    <div id="omniosfiles-list" style="flex-grow: 1; overflow: auto; padding: 0;">
-        <table id="omniosfiles-table" style="width: 100%; border-collapse: collapse; font-size: 13px;">
-            <thead style="background: #f0f0f0; position: sticky; top: 0;">
-                <tr>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd; width: 50%;">Name</th>
-                    <th style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd; width: 15%;">Size</th>
-                    <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd; width: 20%;">Modified</th>
-                    <th style="text-align: center; padding: 8px; border-bottom: 1px solid #ddd; width: 15%;">Actions</th>
-                </tr>
-            </thead>
-            <tbody id="omniosfiles-tbody">
-                <tr><td colspan="4" style="padding: 20px; text-align: center; color: #999;">Loading...</td></tr>
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Progress bar (hidden by default) -->
-    <div id="omniosfiles-progress" style="display: none; padding: 10px; background: #fff3cd; border-top: 1px solid #ffc107;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span id="omniosfiles-progress-text" style="flex-grow: 1;">Transferring...</span>
-            <span id="omniosfiles-progress-percent">0%</span>
-            <button onclick="return pluginHandler.omniosfiles.cancelTransfer();" style="color: red;">Cancel</button>
-        </div>
-        <div style="margin-top: 5px; background: #eee; height: 8px; border-radius: 4px; overflow: hidden;">
-            <div id="omniosfiles-progress-bar" style="height: 100%; background: #28a745; width: 0%; transition: width 0.3s;"></div>
-        </div>
-    </div>
-    
-    <!-- Hidden file input for uploads -->
-    <input type="file" id="omniosfiles-file-input" style="display: none;" onchange="pluginHandler.omniosfiles.handleFileSelect(this);">
-</div>
-
-<style>
-#omniosfiles-table tbody tr:hover {
-    background: #f5f5f5;
-}
-#omniosfiles-table tbody tr td {
-    padding: 6px 8px;
-    border-bottom: 1px solid #eee;
-}
-#omniosfiles-toolbar button {
-    padding: 5px 10px;
-    cursor: pointer;
-    border: 1px solid #ccc;
-    background: #fff;
-    border-radius: 3px;
-}
-#omniosfiles-toolbar button:hover {
-    background: #e9e9e9;
-}
-.omniosfiles-action-btn {
-    padding: 2px 6px;
-    margin: 0 2px;
-    cursor: pointer;
-    border: 1px solid #ccc;
-    background: #fff;
-    border-radius: 3px;
-    font-size: 12px;
-}
-.omniosfiles-action-btn:hover {
-    background: #e9e9e9;
-}
-.omniosfiles-action-btn.danger:hover {
-    background: #ffebee;
-    border-color: #f44336;
-}
-</style>
-`;
+        return '<div id="omniosfiles-container" style="height: 100%; display: flex; flex-direction: column;">' +
+            '<!-- Toolbar -->' +
+            '<div id="omniosfiles-toolbar" style="padding: 8px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">' +
+                '<button id="omniosfiles-btn-refresh" onclick="return pluginHandler.omniosfiles.refresh();" title="Refresh">🔄 Refresh</button>' +
+                '<button id="omniosfiles-btn-upload" onclick="return pluginHandler.omniosfiles.showUploadDialog();" title="Upload File">⬆️ Upload</button>' +
+                '<button id="omniosfiles-btn-newdir" onclick="return pluginHandler.omniosfiles.showNewDirDialog();" title="New Folder">📁+ New Folder</button>' +
+                '<span style="flex-grow: 1;"></span>' +
+                '<span id="omniosfiles-status" style="color: #666; font-size: 12px;"></span>' +
+            '</div>' +
+            '<!-- Breadcrumb navigation -->' +
+            '<div id="omniosfiles-breadcrumb" style="padding: 8px; background: #fafafa; border-bottom: 1px solid #eee; font-size: 13px;">' +
+                '<span style="color: #666;">📂</span> <a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\'/\');">/</a>' +
+            '</div>' +
+            '<!-- File list -->' +
+            '<div id="omniosfiles-list" style="flex-grow: 1; overflow: auto; padding: 0;">' +
+                '<table id="omniosfiles-table" style="width: 100%; border-collapse: collapse; font-size: 13px;">' +
+                    '<thead style="background: #f0f0f0; position: sticky; top: 0;">' +
+                        '<tr>' +
+                            '<th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd; width: 50%;">Name</th>' +
+                            '<th style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd; width: 15%;">Size</th>' +
+                            '<th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd; width: 20%;">Modified</th>' +
+                            '<th style="text-align: center; padding: 8px; border-bottom: 1px solid #ddd; width: 15%;">Actions</th>' +
+                        '</tr>' +
+                    '</thead>' +
+                    '<tbody id="omniosfiles-tbody">' +
+                        '<tr><td colspan="4" style="padding: 20px; text-align: center; color: #999;">Loading...</td></tr>' +
+                    '</tbody>' +
+                '</table>' +
+            '</div>' +
+            '<!-- Progress bar (hidden by default) -->' +
+            '<div id="omniosfiles-progress" style="display: none; padding: 10px; background: #fff3cd; border-top: 1px solid #ffc107;">' +
+                '<div style="display: flex; align-items: center; gap: 10px;">' +
+                    '<span id="omniosfiles-progress-text" style="flex-grow: 1;">Transferring...</span>' +
+                    '<span id="omniosfiles-progress-percent">0%</span>' +
+                    '<button onclick="return pluginHandler.omniosfiles.cancelTransfer();" style="color: red;">Cancel</button>' +
+                '</div>' +
+                '<div style="margin-top: 5px; background: #eee; height: 8px; border-radius: 4px; overflow: hidden;">' +
+                    '<div id="omniosfiles-progress-bar" style="height: 100%; background: #28a745; width: 0%; transition: width 0.3s;"></div>' +
+                '</div>' +
+            '</div>' +
+            '<!-- Hidden file input for uploads -->' +
+            '<input type="file" id="omniosfiles-file-input" style="display: none;" onchange="pluginHandler.omniosfiles.handleFileSelect(this);">' +
+        '</div>' +
+        '<style>' +
+            '#omniosfiles-table tbody tr:hover { background: #f5f5f5; }' +
+            '#omniosfiles-table tbody tr td { padding: 6px 8px; border-bottom: 1px solid #eee; }' +
+            '#omniosfiles-toolbar button { padding: 5px 10px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 3px; }' +
+            '#omniosfiles-toolbar button:hover { background: #e9e9e9; }' +
+            '.omniosfiles-action-btn { padding: 2px 6px; margin: 0 2px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 3px; font-size: 12px; }' +
+            '.omniosfiles-action-btn:hover { background: #e9e9e9; }' +
+            '.omniosfiles-action-btn.danger:hover { background: #ffebee; border-color: #f44336; }' +
+        '</style>';
     };
     
     /**
@@ -383,6 +357,11 @@ module.exports.omniosfiles = function(parent) {
         // Initialize state
         if (!pluginHandler.omniosfiles.state) {
             pluginHandler.omniosfiles.state = {};
+        }
+        
+        // Initialize settings cache
+        if (!pluginHandler.omniosfiles.settingsCache) {
+            pluginHandler.omniosfiles.settingsCache = pluginHandler.omniosfiles.getSettings();
         }
         
         var nodeId = currentNode._id;
@@ -482,9 +461,9 @@ module.exports.omniosfiles = function(parent) {
         
         // Parent directory link (if not at root)
         if (state.currentPath !== '/') {
-            var parentPath = state.currentPath.replace(/\\/[^\\/]+\\/?$/, '') || '/';
-            html += '<tr style="cursor: pointer;" onclick="pluginHandler.omniosfiles.navigateTo(\\'' + 
-                pluginHandler.omniosfiles.escapeHtml(parentPath) + '\\');">' +
+            var parentPath = state.currentPath.replace(/\/[^\/]+\/?$/, '') || '/';
+            html += '<tr style="cursor: pointer;" onclick="pluginHandler.omniosfiles.navigateTo(\'' + 
+                pluginHandler.omniosfiles.escapeHtml(parentPath) + '\');">' +
                 '<td>📁 ..</td><td></td><td></td><td></td></tr>';
         }
         
@@ -500,8 +479,8 @@ module.exports.omniosfiles = function(parent) {
             
             // Name column
             if (item.isDirectory) {
-                html += '<td style="cursor: pointer;" onclick="pluginHandler.omniosfiles.navigateTo(\\'' + 
-                    pluginHandler.omniosfiles.escapeHtml(itemPath) + '\\');">' + 
+                html += '<td style="cursor: pointer;" onclick="pluginHandler.omniosfiles.navigateTo(\'' + 
+                    pluginHandler.omniosfiles.escapeHtml(itemPath) + '\');">' + 
                     icon + ' ' + pluginHandler.omniosfiles.escapeHtml(item.name) + '</td>';
             } else {
                 html += '<td>' + icon + ' ' + pluginHandler.omniosfiles.escapeHtml(item.name) + '</td>';
@@ -516,15 +495,15 @@ module.exports.omniosfiles = function(parent) {
             // Actions column
             html += '<td style="text-align: center;">';
             if (!item.isDirectory) {
-                html += '<button class="omniosfiles-action-btn" onclick="pluginHandler.omniosfiles.downloadFile(\\'' + 
-                    pluginHandler.omniosfiles.escapeHtml(itemPath) + '\\');" title="Download">⬇️</button>';
+                html += '<button class="omniosfiles-action-btn" onclick="pluginHandler.omniosfiles.downloadFile(\'' + 
+                    pluginHandler.omniosfiles.escapeHtml(itemPath) + '\');" title="Download">⬇️</button>';
             }
-            html += '<button class="omniosfiles-action-btn" onclick="pluginHandler.omniosfiles.showRenameDialog(\\'' + 
-                pluginHandler.omniosfiles.escapeHtml(itemPath) + '\\', \\'' + 
-                pluginHandler.omniosfiles.escapeHtml(item.name) + '\\');" title="Rename">✏️</button>';
-            html += '<button class="omniosfiles-action-btn danger" onclick="pluginHandler.omniosfiles.confirmDelete(\\'' + 
-                pluginHandler.omniosfiles.escapeHtml(itemPath) + '\\', \\'' + 
-                pluginHandler.omniosfiles.escapeHtml(item.name) + '\\', ' + item.isDirectory + ');" title="Delete">🗑️</button>';
+            html += '<button class="omniosfiles-action-btn" onclick="pluginHandler.omniosfiles.showRenameDialog(\'' + 
+                pluginHandler.omniosfiles.escapeHtml(itemPath) + '\', \'' + 
+                pluginHandler.omniosfiles.escapeHtml(item.name) + '\');" title="Rename">✏️</button>';
+            html += '<button class="omniosfiles-action-btn danger" onclick="pluginHandler.omniosfiles.confirmDelete(\'' + 
+                pluginHandler.omniosfiles.escapeHtml(itemPath) + '\', \'' + 
+                pluginHandler.omniosfiles.escapeHtml(item.name) + '\', ' + item.isDirectory + ');" title="Delete">🗑️</button>';
             html += '</td>';
             
             html += '</tr>';
@@ -552,13 +531,13 @@ module.exports.omniosfiles = function(parent) {
         
         var parts = state.currentPath.split('/').filter(function(p) { return p; });
         var html = '<span style="color: #666;">📂</span> ';
-        html += '<a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\\'/\\');">/var/nr</a>';
+        html += '<a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\'/\');">/var/nr</a>';
         
         var path = '';
         for (var i = 0; i < parts.length; i++) {
             path += '/' + parts[i];
-            html += ' / <a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\\'' + 
-                pluginHandler.omniosfiles.escapeHtml(path) + '\\');">' + 
+            html += ' / <a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\'' + 
+                pluginHandler.omniosfiles.escapeHtml(path) + '\');">' + 
                 pluginHandler.omniosfiles.escapeHtml(parts[i]) + '</a>';
         }
         
@@ -596,7 +575,7 @@ module.exports.omniosfiles = function(parent) {
         var state = pluginHandler.omniosfiles.state[currentNode._id];
         if (!state) return;
         
-        var settings = ${JSON.stringify(settings)};
+        var settings = pluginHandler.omniosfiles.settingsCache || {};
         var maxSize = settings.maxFileSize || 3221225472;
         
         // Validate file size
@@ -628,8 +607,8 @@ module.exports.omniosfiles = function(parent) {
         // Show progress
         pluginHandler.omniosfiles.showProgress('Preparing upload: ' + file.name, 0);
         
-        // Compute checksum if enabled
-        if (settings.enableChecksum) {
+        // Compute checksum if enabled and file is not too large
+        if (settings.enableChecksum && file.size <= 104857600) { // 100MB limit for client checksum
             pluginHandler.omniosfiles.computeClientChecksum(file, requestId, function(checksum) {
                 state.transfers[requestId].clientChecksum = checksum;
                 pluginHandler.omniosfiles.sendUploadStart(requestId, targetPath, file, checksum);
@@ -643,7 +622,6 @@ module.exports.omniosfiles = function(parent) {
      * Compute SHA-256 checksum on client side
      */
     obj.computeClientChecksum = function(file, requestId, callback) {
-        // Use Web Crypto API
         var reader = new FileReader();
         
         reader.onload = function(e) {
@@ -659,12 +637,6 @@ module.exports.omniosfiles = function(parent) {
         reader.onerror = function() {
             callback(null);
         };
-        
-        // For large files, skip client-side checksum (too slow)
-        if (file.size > 104857600) { // 100MB
-            callback(null);
-            return;
-        }
         
         reader.readAsArrayBuffer(file);
     };
@@ -1082,7 +1054,7 @@ module.exports.omniosfiles = function(parent) {
         var msg = 'Are you sure you want to delete ' + 
             (isDirectory ? 'folder' : 'file') + ' "' + name + '"?';
         if (isDirectory) {
-            msg += '\\n\\nThis will delete all contents inside the folder.';
+            msg += '\n\nThis will delete all contents inside the folder.';
         }
         
         if (confirm(msg)) {
@@ -1141,7 +1113,7 @@ module.exports.omniosfiles = function(parent) {
         var state = pluginHandler.omniosfiles.state[currentNode._id];
         if (!state) return;
         
-        var parentPath = srcPath.replace(/\\/[^\\/]+\\/?$/, '') || '/';
+        var parentPath = srcPath.replace(/\/[^\/]+\/?$/, '') || '/';
         var dstPath = (parentPath === '/' ? '' : parentPath) + '/' + newName;
         
         meshserver.send({
@@ -1227,7 +1199,7 @@ module.exports.omniosfiles = function(parent) {
      */
     obj.escapeHtml = function(text) {
         if (!text) return '';
-        return text.replace(/&/g, '&amp;')
+        return String(text).replace(/&/g, '&amp;')
                    .replace(/</g, '&lt;')
                    .replace(/>/g, '&gt;')
                    .replace(/"/g, '&quot;')
