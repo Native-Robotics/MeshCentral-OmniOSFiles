@@ -18,6 +18,8 @@ module.exports.omniosfiles = function(parent) {
     obj.exports = [
         // Lifecycle hooks
         'onDeviceRefreshEnd',
+        // Tab content generator
+        'getPluginTabContent',
         // Server response handlers
         'listDirResult',
         'createDirResult',
@@ -81,14 +83,6 @@ module.exports.omniosfiles = function(parent) {
         }
         
         return obj.settings;
-    };
-    
-    /**
-     * Get settings JSON for embedding in frontend
-     */
-    obj.getSettingsJson = function() {
-        var settings = obj.loadSettings();
-        return JSON.stringify(settings);
     };
     
     /**
@@ -303,23 +297,10 @@ module.exports.omniosfiles = function(parent) {
     };
     
     /**
-     * Custom device page - adds "OmniOS Files" tab
+     * Generate tab HTML content for plugin tab
      */
-    obj.on_device_page = function() {
-        return {
-            tabId: 'omniosfiles',
-            tabTitle: 'OmniOS Files',
-            tabContent: obj.getTabContent()
-        };
-    };
-    
-    /**
-     * Generate tab HTML content
-     */
-    obj.getTabContent = function() {
-        var settingsJson = obj.getSettingsJson();
-        return '<script>if(!pluginHandler.omniosfiles.settingsCache){pluginHandler.omniosfiles.settingsCache=' + settingsJson + ';}</script>' +
-        '<div id="omniosfiles-container" style="height: 100%; display: flex; flex-direction: column;">' +
+    obj.getPluginTabContent = function() {
+        return '<div id="omniosfiles-container" style="height: 100%; display: flex; flex-direction: column;">' +
             '<!-- Toolbar -->' +
             '<div id="omniosfiles-toolbar" style="padding: 8px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">' +
                 '<button id="omniosfiles-btn-refresh" onclick="return pluginHandler.omniosfiles.refresh();" title="Refresh">🔄 Refresh</button>' +
@@ -380,12 +361,20 @@ module.exports.omniosfiles = function(parent) {
         if (typeof document === 'undefined') return;
         if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) return;
         
+        // Register plugin tab if not already registered
+        if (typeof pluginHandler !== 'undefined' && typeof pluginHandler.registerPluginTab === 'function') {
+            pluginHandler.registerPluginTab({
+                tabId: 'omniosfiles',
+                tabTitle: 'OmniOS Files'
+            });
+        }
+        
         // Initialize state
         if (!pluginHandler.omniosfiles.state) {
             pluginHandler.omniosfiles.state = {};
         }
         
-        // Settings are embedded in HTML via script tag, use defaults if not available
+        // Initialize settings with defaults
         if (!pluginHandler.omniosfiles.settingsCache) {
             pluginHandler.omniosfiles.settingsCache = {
                 basePath: '/var/nr',
@@ -408,9 +397,17 @@ module.exports.omniosfiles = function(parent) {
             };
         }
         
-        // Refresh file list if tab is visible
+        // Populate the tab content
+        var tabDiv = document.getElementById('omniosfiles');
+        if (tabDiv && !tabDiv.querySelector('#omniosfiles-container')) {
+            tabDiv.innerHTML = pluginHandler.omniosfiles.getPluginTabContent();
+        }
+        
+        // Refresh file list after a short delay
         setTimeout(function() {
-            pluginHandler.omniosfiles.refresh();
+            if (document.getElementById('omniosfiles-container')) {
+                pluginHandler.omniosfiles.refresh();
+            }
         }, 100);
     };
     
