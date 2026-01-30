@@ -16,7 +16,9 @@ module.exports.omniosfiles = function(parent) {
     
     // Exported methods for frontend
     obj.exports = [
+        // Lifecycle hooks
         'onDeviceRefreshEnd',
+        // Server response handlers
         'listDirResult',
         'createDirResult',
         'deleteResult',
@@ -31,7 +33,29 @@ module.exports.omniosfiles = function(parent) {
         'uploadAck',
         'uploadComplete',
         'uploadError',
-        'uploadCancelled'
+        'uploadCancelled',
+        // UI action methods (called from HTML onclick handlers)
+        'refresh',
+        'navigateTo',
+        'showUploadDialog',
+        'handleFileSelect',
+        'uploadFile',
+        'downloadFile',
+        'showNewDirDialog',
+        'createDirectory',
+        'confirmDelete',
+        'deleteItem',
+        'showRenameDialog',
+        'renameItem',
+        'cancelTransfer',
+        // UI helper methods
+        'renderFileList',
+        'updateBreadcrumb',
+        'showProgress',
+        'hideProgress',
+        'setStatus',
+        'formatSize',
+        'escapeHtml'
     ];
     
     /**
