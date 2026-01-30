@@ -1,7 +1,7 @@
 {
   "name": "OmniOS Files",
   "shortName": "omniosfiles",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Native Robotics",
   "description": "Restricted file browser for /var/nr directory with full file operations support",
   "hasAdminPanel": false,
@@ -21,7 +21,14 @@
     "runAsGroup": "user",
     "filterMode": "blacklist",
     "allowedExtensions": [],
-    "blockedExtensions": [".exe", ".bat", ".cmd", ".com", ".scr", ".pif"],
+    "blockedExtensions": [
+      ".exe",
+      ".bat",
+      ".cmd",
+      ".com",
+      ".scr",
+      ".pif"
+    ],
     "maxFileSize": 3221225472,
     "chunkSize": 65536,
     "enableChecksum": true,
