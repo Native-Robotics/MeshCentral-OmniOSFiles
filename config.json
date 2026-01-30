@@ -10,6 +10,10 @@
     "type": "git",
     "url": "https://github.com/Native-Robotics/MeshCentral-OmniOSFiles.git"
   },
+  "downloadUrl": "https://github.com/Native-Robotics/MeshCentral-OmniOSFiles/archive/refs/heads/main.zip",
+  "configUrl": "https://raw.githubusercontent.com/Native-Robotics/MeshCentral-OmniOSFiles/main/config.json",
+  "changelogUrl": "https://raw.githubusercontent.com/Native-Robotics/MeshCentral-OmniOSFiles/main/CHANGELOG.md",
+  "versionHistoryUrl": "https://api.github.com/repos/Native-Robotics/MeshCentral-OmniOSFiles/tags",
   "meshCentralCompat": ">=1.1.35",
   "settings": {
     "basePath": "/var/nr",
