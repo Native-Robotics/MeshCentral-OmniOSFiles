@@ -1,7 +1,7 @@
 {
   "name": "OmniOS Files",
   "shortName": "omniosfiles",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "Native Robotics",
   "description": "Restricted file browser for /var/nr directory with full file operations support",
   "hasAdminPanel": false,
