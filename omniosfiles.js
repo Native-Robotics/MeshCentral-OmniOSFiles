@@ -31,8 +31,7 @@ module.exports.omniosfiles = function(parent) {
         'uploadAck',
         'uploadComplete',
         'uploadError',
-        'uploadCancelled',
-        'getSettings'
+        'uploadCancelled'
     ];
     
     /**
@@ -61,10 +60,11 @@ module.exports.omniosfiles = function(parent) {
     };
     
     /**
-     * Get settings for frontend
+     * Get settings JSON for embedding in frontend
      */
-    obj.getSettings = function() {
-        return obj.loadSettings();
+    obj.getSettingsJson = function() {
+        var settings = obj.loadSettings();
+        return JSON.stringify(settings);
     };
     
     /**
@@ -293,7 +293,9 @@ module.exports.omniosfiles = function(parent) {
      * Generate tab HTML content
      */
     obj.getTabContent = function() {
-        return '<div id="omniosfiles-container" style="height: 100%; display: flex; flex-direction: column;">' +
+        var settingsJson = obj.getSettingsJson();
+        return '<script>if(!pluginHandler.omniosfiles.settingsCache){pluginHandler.omniosfiles.settingsCache=' + settingsJson + ';}</script>' +
+        '<div id="omniosfiles-container" style="height: 100%; display: flex; flex-direction: column;">' +
             '<!-- Toolbar -->' +
             '<div id="omniosfiles-toolbar" style="padding: 8px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">' +
                 '<button id="omniosfiles-btn-refresh" onclick="return pluginHandler.omniosfiles.refresh();" title="Refresh">🔄 Refresh</button>' +
@@ -359,9 +361,17 @@ module.exports.omniosfiles = function(parent) {
             pluginHandler.omniosfiles.state = {};
         }
         
-        // Initialize settings cache
+        // Settings are embedded in HTML via script tag, use defaults if not available
         if (!pluginHandler.omniosfiles.settingsCache) {
-            pluginHandler.omniosfiles.settingsCache = pluginHandler.omniosfiles.getSettings();
+            pluginHandler.omniosfiles.settingsCache = {
+                basePath: '/var/nr',
+                filterMode: 'blacklist',
+                allowedExtensions: [],
+                blockedExtensions: ['.exe', '.bat', '.cmd', '.com', '.scr', '.pif'],
+                maxFileSize: 3221225472,
+                chunkSize: 65536,
+                enableChecksum: true
+            };
         }
         
         var nodeId = currentNode._id;
