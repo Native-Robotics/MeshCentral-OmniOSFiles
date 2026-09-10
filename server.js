@@ -42,7 +42,12 @@ exports.create = function (parent, settings) {
         try { c.ws.send(JSON.stringify(Object.assign({action: 'plugin', plugin: 'omniosfiles', method: 'result', protocol: 2, nodeid: c.nodeid, requestId: c.requestId}, body))); } catch (e) { }
     }
     function remove(j) { clearTimeout(j.timer); jobs.delete(j.id); }
-    function stop(t) { if (t) transfers.delete(t.id); }
+    function stop(t) { if (t) { clearTimeout(t.timer); transfers.delete(t.id); } }
+    function touch(t) {
+        t.time = Date.now(); clearTimeout(t.timer);
+        t.timer = setTimeout(function () { stop(t); }, 120000);
+        if (t.timer.unref) t.timer.unref();
+    }
     function normalize(cmd) {
         const args = {};
         function path(v) {
@@ -99,7 +104,7 @@ exports.create = function (parent, settings) {
             });
         } else if (cmd.pluginaction === 'response' && j.approved) {
             remove(j);
-            if (j.t) { j.t.busy = false; j.t.time = Date.now(); }
+            if (j.t) { j.t.busy = false; touch(j.t); }
             const data = cmd.result;
             if (!data || typeof data !== 'object' || typeof data.type !== 'string' || JSON.stringify(data).length > 200000) { stop(j.t); return send(j.c, {error: 'Invalid device response'}); }
             if (['uploadComplete', 'downloadComplete', 'cancelled', 'error'].includes(data.type) || data.error) stop(j.t);
@@ -120,7 +125,7 @@ exports.create = function (parent, settings) {
         const action = cmd.pluginaction;
         if (!actions.has(action) && action !== 'capabilities') return;
         const t = [...transfers.values()].find(t => t.c.ws === c.ws && t.c.requestId === c.requestId && t.c.nodeid === c.nodeid);
-        const write = t ? t.write : writes.has(action);
+        const write = continuation.has(action) && t ? t.write : writes.has(action);
         access(c, write, function (ok) {
             if (!ok) return send(c, {error: 'Access denied'});
             if (action === 'capabilities') return access(c, true, canWrite => send(c, {data: {type: 'capabilities', read: true, write: canWrite, maxFileSize: settings.maxFileSize, chunkSize: CHUNK}}));
@@ -134,7 +139,7 @@ exports.create = function (parent, settings) {
                     for (const old of transfers.values()) if (Date.now() - old.time > 120000 || !live(old.c) || web.wsagents[old.c.nodeid] !== old.agent) stop(old);
                     if (t || [...transfers.values()].filter(t => t.c.nodeid === c.nodeid).length >= settings.maxConcurrentTransfers) throw Error('Transfer limit reached');
                     const next = {id: id(), c, agent: web.wsagents[c.nodeid], write, time: Date.now()};
-                    transfers.set(next.id, next); launch(c, action, args, write, next);
+                    transfers.set(next.id, next); touch(next); launch(c, action, args, write, next);
                 } else launch(c, action, args, write, null);
             } catch (e) { send(c, {error: e.message}); }
         });

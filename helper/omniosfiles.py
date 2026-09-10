@@ -10,6 +10,7 @@ import os
 import pwd
 import re
 import select
+import signal
 import stat
 import sys
 import time
@@ -329,6 +330,9 @@ class Worker:
 
 def main():
     worker = None
+    def terminate(signum, frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, terminate)
     try:
         if not sys.platform.startswith('linux'):
             raise RuntimeError('Only Linux OmniOS is supported')

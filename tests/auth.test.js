@@ -59,3 +59,9 @@ test('unknown transfer cannot be continued or cancelled', () => {
     const h = setup(); h.request({pluginaction: 'uploadChunk', chunkIndex: 0, data: 'YQ=='}); h.request({pluginaction: 'cancel'});
     assert.equal(h.executed.length, 0);
 });
+
+test('a read transfer ID does not grant mutation permissions', () => {
+    const h = setup(); h.rights(true, false); h.request({pluginaction: 'startDownload'});
+    assert.equal(h.executed.length, 1); h.request({pluginaction: 'delete'});
+    assert.equal(h.executed.length, 1); assert.equal(h.sent.at(-1).error, 'Access denied');
+});
