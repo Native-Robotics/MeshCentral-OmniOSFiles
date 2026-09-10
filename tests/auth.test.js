@@ -65,3 +65,21 @@ test('a read transfer ID does not grant mutation permissions', () => {
     assert.equal(h.executed.length, 1); h.request({pluginaction: 'delete'});
     assert.equal(h.executed.length, 1); assert.equal(h.sent.at(-1).error, 'Access denied');
 });
+test('replaced agent cannot approve or complete a pending operation', () => {
+    const h=setup({hold:true});h.request();const proposal=h.wire[0];
+    h.web.wsagents[h.agent.dbNodeKey]={dbNodeKey:h.agent.dbNodeKey,send(){}};
+    h.guard(proposal);assert.equal(h.wire.length,1);assert.equal(h.executed.length,0);
+    // Let the original job finish through an error response only after restoring the
+    // connection for cleanup; this is not an authorization grant to the replacement.
+    h.web.wsagents[h.agent.dbNodeKey]=h.agent;
+    h.service.serveraction({pluginaction:'authorize',requestId:proposal.requestId,payload:proposal.payload,challenge:'b'.repeat(64)},h.agent);
+    h.guard(h.wire[1]);assert.equal(h.executed.length,1);
+});
+test('changed proposal payload cannot be approved by the server', () => {
+    const h=setup({hold:true});h.request();const original=h.wire[0];
+    h.guard({...original,payload:JSON.stringify({protocol:2,action:'delete'})});
+    assert.equal(h.wire.length,1);assert.equal(h.executed.length,0);
+    // Expire the unapproved agent proposal, then complete the real proposal.
+    for(const fn of [...h.timers])fn();h.guard(original);h.guard(h.wire[1]);
+    assert.equal(h.executed[0].action,'listDir');
+});
