@@ -48,3 +48,22 @@ test('out-of-order directory responses cannot overwrite the latest navigation', 
     assert.equal(p.nodes['node//a'].path,'/new');
 });
 exports.browser=browser;
+test('filenames are DOM text, never inline JavaScript', () => {
+    const {p,ctx}=browser();
+    const nodes=[];
+    function element(tag){const e={tag,children:[],events:{},appendChild(x){this.children.push(x);},addEventListener(k,fn){this.events[k]=fn;},style:{}};nodes.push(e);return e;}
+    const host=element('div');ctx.document={getElementById(){return host;},createElement:element};
+    const source=factory({parent:{webserver:{}}});p.render=vm.runInNewContext('('+source.render.toString()+')',ctx);
+    const name="');window.attacked=true;//<img src=x>";
+    p.nodes['node//a'].items=[{name,path:'/'+name,isDirectory:false,supported:true,size:1,mtime:0}];p.render('node//a');
+    assert.ok(nodes.some(n=>n.textContent===name));assert.ok(nodes.every(n=>n.innerHTML===undefined&&n.onclick===undefined));
+    let clicked;p.download=(node,item)=>{clicked={node,item};};nodes.find(n=>n.textContent==='Download').events.click();
+    assert.equal(clicked.item.name,name);assert.equal(clicked.node,'node//a');
+});
+test('cancellation waits for the in-flight chunk before sending cancel', () => {
+    const {p,sent}=browser();const t={id:'u',node:'node//a',started:true,total:1,offset:0,name:'x'};p.transfers.u=t;
+    p.pending.u={};p.cancel('u');assert.equal(sent.length,0);assert.equal(t.cancelling,true);
+    delete p.pending.u;p.cancel('u');assert.equal(sent[0].pluginaction,'cancel');
+    p.result({}, {protocol:2,nodeid:'node//a',requestId:'u',data:{type:'cancelled'}});
+    assert.equal(p.transfers.u,undefined);assert.equal(p.nodes['node//a'].status,'Cancelled');
+});

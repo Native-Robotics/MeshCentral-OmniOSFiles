@@ -150,6 +150,28 @@ class WorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.call('finishDownload', KEY, checksum=hashlib.sha256(b'abc').hexdigest())
 
+    def test_parent_symlink_swap_after_open_does_not_redirect_write(self):
+        folder = self.root / 'folder'; folder.mkdir()
+        original = self.w.parent
+        def swap(path):
+            fd, name = original(path)
+            folder.rename(self.root / 'moved')
+            folder.symlink_to(self.outside, target_is_directory=True)
+            return fd, name
+        with mock.patch.object(self.w, 'parent', side_effect=swap):
+            self.call('createDir', path='/folder/new')
+        self.assertTrue((self.root / 'moved/new').is_dir())
+        self.assertFalse((self.outside / 'new').exists())
+
+    def test_duplicate_chunk_aborts_without_publishing(self):
+        self.call('startUpload', KEY, path='/new', totalSize=65537)
+        data = base64.b64encode(b'x'*65536).decode()
+        self.call('uploadChunk', KEY, chunkIndex=0, data=data)
+        with self.assertRaises(ValueError):
+            self.call('uploadChunk', KEY, chunkIndex=0, data=data)
+        self.assertFalse((self.root / 'new').exists())
+        self.assertEqual(self.w.transfers, {})
+
     def test_only_one_worker_and_no_leaked_fds(self):
         before = len(os.listdir('/proc/self/fd'))
         with self.assertRaises(BlockingIOError):
