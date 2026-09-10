@@ -1,1270 +1,227 @@
-/**
- * MeshCentral-OmniOSFiles Server Plugin
- * Restricted file browser for /var/nr directory
- * 
- * Provides custom tab in device panel with file operations
- */
-
-"use strict";
-
+'use strict';
 module.exports.omniosfiles = function (parent) {
     var obj = {};
-
-    obj.parent = parent;                    // Plugin handler
-    obj.meshServer = parent.parent;         // MeshCentral server
-    obj.settings = null;                    // Plugin settings from config.json
-
-    // Exported methods for frontend
-    obj.exports = [
-        // Lifecycle hooks
-        'onDeviceRefreshEnd',
-        // Tab content generator
-        'getPluginTabContent',
-        // Server response handlers
-        'listDirResult',
-        'createDirResult',
-        'deleteResult',
-        'renameResult',
-        'fileInfoResult',
-        'downloadStart',
-        'downloadChunk',
-        'downloadComplete',
-        'downloadError',
-        'downloadCancelled',
-        'uploadReady',
-        'uploadAck',
-        'uploadComplete',
-        'uploadError',
-        'uploadCancelled',
-        // UI action methods (called from HTML onclick handlers)
-        'refresh',
-        'navigateTo',
-        'showUploadDialog',
-        'handleFileSelect',
-        'uploadFile',
-        'downloadFile',
-        'showNewDirDialog',
-        'createDirectory',
-        'confirmDelete',
-        'deleteItem',
-        'showRenameDialog',
-        'renameItem',
-        'cancelTransfer',
-        // UI helper methods
-        'renderFileList',
-        'updateBreadcrumb',
-        'showProgress',
-        'hideProgress',
-        'setStatus',
-        'formatSize',
-        'escapeHtml'
-    ];
-
-    /**
-     * Load settings from config.json
-     */
-    obj.loadSettings = function () {
-        if (obj.settings) return obj.settings;
-
-        try {
-            var configPath = require('path').join(__dirname, 'config.json');
-            var config = JSON.parse(require('fs').readFileSync(configPath, 'utf8'));
-            obj.settings = config.settings || {};
-        } catch (e) {
-            obj.settings = {
-                basePath: '/var/nr',
-                filterMode: 'blacklist',
-                allowedExtensions: [],
-                blockedExtensions: ['.exe', '.bat', '.cmd', '.com', '.scr', '.pif'],
-                maxFileSize: 3221225472,
-                chunkSize: 65536,
-                enableChecksum: true
-            };
-        }
-
-        return obj.settings;
-    };
-
-    /**
-     * Validate file extension based on filter settings
-     */
-    obj.isExtensionAllowed = function (filename) {
-        var settings = obj.loadSettings();
-        var ext = require('path').extname(filename).toLowerCase();
-
-        if (settings.filterMode === 'whitelist') {
-            if (!settings.allowedExtensions || settings.allowedExtensions.length === 0) {
-                return true;
-            }
-            return settings.allowedExtensions.indexOf(ext) !== -1;
-        } else {
-            // blacklist mode
-            if (!settings.blockedExtensions || settings.blockedExtensions.length === 0) {
-                return true;
-            }
-            return settings.blockedExtensions.indexOf(ext) === -1;
-        }
-    };
-
-    /**
-     * Validate file size
-     */
-    obj.isFileSizeAllowed = function (size) {
-        var settings = obj.loadSettings();
-        return size <= (settings.maxFileSize || 3221225472);
-    };
-
-    /**
-     * Hook: Called when agent core is stable
-     */
-    obj.hook_agentCoreIsStable = function (myparent, grandparent) {
-        // Agent is ready - can request initial data if needed
-    };
-
-    /**
-     * Handle server actions from frontend or agent
-     */
-    obj.serveraction = function (command, myparent, grandparent) {
-        var nodeid = null;
-        var sessionid = null;
-
-        // Determine source (agent or browser)
-        if (myparent && myparent.dbNodeKey) {
-            // From agent
-            nodeid = myparent.dbNodeKey;
-        }
-
-        if (command.sessionid) {
-            sessionid = command.sessionid;
-        }
-
-        console.log('[omniosfiles] serveraction:', command.pluginaction, 'nodeid:', nodeid || command.nodeid);
-
-        switch (command.pluginaction) {
-            // =====================
-            // Frontend -> Agent routing
-            // =====================
-            case 'listDir':
-            case 'createDir':
-            case 'delete':
-            case 'rename':
-            case 'fileInfo':
-            case 'startDownload':
-            case 'requestChunk':
-            case 'cancelDownload':
-            case 'cancelUpload':
-                obj.routeToAgent(command, grandparent);
-                break;
-
-            case 'startUpload':
-                // Validate before routing
-                if (!obj.isExtensionAllowed(command.fileName)) {
-                    obj.sendToSession(command.sessionid, {
-                        action: 'plugin',
-                        plugin: 'omniosfiles',
-                        method: 'uploadError',
-                        requestId: command.requestId,
-                        error: 'File extension not allowed'
-                    }, grandparent);
-                    return;
-                }
-                if (!obj.isFileSizeAllowed(command.totalSize)) {
-                    obj.sendToSession(command.sessionid, {
-                        action: 'plugin',
-                        plugin: 'omniosfiles',
-                        method: 'uploadError',
-                        requestId: command.requestId,
-                        error: 'File size exceeds maximum allowed (' +
-                            Math.round(obj.loadSettings().maxFileSize / 1073741824) + ' GB)'
-                    }, grandparent);
-                    return;
-                }
-                obj.routeToAgent(command, grandparent);
-                break;
-
-            case 'uploadChunk':
-                obj.routeToAgent(command, grandparent);
-                break;
-
-            // =====================
-            // Agent -> Frontend routing
-            // =====================
-            case 'listDirResult':
-            case 'createDirResult':
-            case 'deleteResult':
-            case 'renameResult':
-            case 'fileInfoResult':
-            case 'downloadStart':
-            case 'downloadChunk':
-            case 'downloadComplete':
-            case 'downloadError':
-            case 'downloadCancelled':
-            case 'uploadReady':
-            case 'uploadAck':
-            case 'uploadComplete':
-            case 'uploadError':
-            case 'uploadCancelled':
-                obj.routeToFrontend(command, grandparent);
-                break;
-
-            default:
-                // Unknown action
-                break;
-        }
-    };
-
-    /**
-     * Route command to agent
-     */
-    obj.routeToAgent = function (command, grandparent) {
-        console.log('[omniosfiles] routeToAgent:', command.pluginaction, 'nodeid:', command.nodeid);
-        if (!command.nodeid) { console.log('[omniosfiles] routeToAgent: no nodeid'); return; }
-
-        var agent = obj.meshServer.webserver.wsagents[command.nodeid];
-        console.log('[omniosfiles] Agent found:', !!agent);
-        if (agent) {
-            try {
-                agent.send(JSON.stringify({
-                    action: 'plugin',
-                    plugin: 'omniosfiles',
-                    pluginaction: command.pluginaction,
-                    requestId: command.requestId,
-                    sessionid: command.sessionid,
-                    // Pass through all other properties
-                    path: command.path,
-                    srcPath: command.srcPath,
-                    dstPath: command.dstPath,
-                    fileName: command.fileName,
-                    totalSize: command.totalSize,
-                    checksum: command.checksum,
-                    chunkIndex: command.chunkIndex,
-                    data: command.data,
-                    isLast: command.isLast
-                }));
-                console.log('[omniosfiles] Sent to agent');
-            } catch (e) {
-                console.log('[omniosfiles] Agent send failed:', e);
-            }
-        } else {
-            console.log('[omniosfiles] Agent not connected');
-        }
-    };
-
-    /**
-     * Route command to frontend session
-     */
-    obj.routeToFrontend = function (command, grandparent) {
-        if (!command.sessionid) return;
-
-        var msg = {
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            method: command.pluginaction,
-            requestId: command.requestId,
-            // Pass through relevant data
-            success: command.success,
-            error: command.error,
-            path: command.path,
-            items: command.items,
-            info: command.info,
-            srcPath: command.srcPath,
-            dstPath: command.dstPath,
-            fileName: command.fileName,
-            totalSize: command.totalSize,
-            totalChunks: command.totalChunks,
-            chunkSize: command.chunkSize,
-            chunkIndex: command.chunkIndex,
-            data: command.data,
-            bytesRead: command.bytesRead,
-            isLast: command.isLast,
-            checksum: command.checksum,
-            checksumError: command.checksumError,
-            checksumMatch: command.checksumMatch,
-            receivedBytes: command.receivedBytes,
-            ownershipSet: command.ownershipSet
-        };
-
-        obj.sendToSession(command.sessionid, msg, grandparent);
-    };
-
-    /**
-     * Send message to a specific browser session
-     */
-    obj.sendToSession = function (sessionid, msg, grandparent) {
-        if (!sessionid) return;
-
-        var wss = obj.meshServer.webserver.wssessions2;
-        if (wss && wss[sessionid]) {
-            try {
-                wss[sessionid].send(JSON.stringify(msg));
-            } catch (e) {
-                // Session send failed
-            }
-        }
-    };
-
-    /**
-     * Generate tab HTML content for plugin tab
-     */
-    obj.getPluginTabContent = function () {
-        return '<div id="omniosfiles-container" style="height: 100%; display: flex; flex-direction: column;">' +
-            '<!-- Toolbar -->' +
-            '<div id="omniosfiles-toolbar" style="padding: 8px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">' +
-            '<button id="omniosfiles-btn-refresh" onclick="return pluginHandler.omniosfiles.refresh();" title="Refresh">🔄 Refresh</button>' +
-            '<button id="omniosfiles-btn-upload" onclick="return pluginHandler.omniosfiles.showUploadDialog();" title="Upload File">⬆️ Upload</button>' +
-            '<button id="omniosfiles-btn-newdir" onclick="return pluginHandler.omniosfiles.showNewDirDialog();" title="New Folder">📁+ New Folder</button>' +
-            '<span style="flex-grow: 1;"></span>' +
-            '<span id="omniosfiles-status" style="color: #666; font-size: 12px;"></span>' +
-            '</div>' +
-            '<!-- Breadcrumb navigation -->' +
-            '<div id="omniosfiles-breadcrumb" style="padding: 8px; background: #fafafa; border-bottom: 1px solid #eee; font-size: 13px;">' +
-            '<span style="color: #666;">📂</span> <a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\'/\');">/</a>' +
-            '</div>' +
-            '<!-- File list -->' +
-            '<div id="omniosfiles-list" style="flex-grow: 1; overflow: auto; padding: 0;">' +
-            '<table id="omniosfiles-table" style="width: 100%; border-collapse: collapse; font-size: 13px;">' +
-            '<thead style="background: #f0f0f0; position: sticky; top: 0;">' +
-            '<tr>' +
-            '<th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd; width: 50%;">Name</th>' +
-            '<th style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd; width: 15%;">Size</th>' +
-            '<th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd; width: 20%;">Modified</th>' +
-            '<th style="text-align: center; padding: 8px; border-bottom: 1px solid #ddd; width: 15%;">Actions</th>' +
-            '</tr>' +
-            '</thead>' +
-            '<tbody id="omniosfiles-tbody">' +
-            '<tr><td colspan="4" style="padding: 20px; text-align: center; color: #999;">Loading...</td></tr>' +
-            '</tbody>' +
-            '</table>' +
-            '</div>' +
-            '<!-- Progress bar (hidden by default) -->' +
-            '<div id="omniosfiles-progress" style="display: none; padding: 10px; background: #fff3cd; border-top: 1px solid #ffc107;">' +
-            '<div style="display: flex; align-items: center; gap: 10px;">' +
-            '<span id="omniosfiles-progress-text" style="flex-grow: 1;">Transferring...</span>' +
-            '<span id="omniosfiles-progress-percent">0%</span>' +
-            '<button onclick="return pluginHandler.omniosfiles.cancelTransfer();" style="color: red;">Cancel</button>' +
-            '</div>' +
-            '<div style="margin-top: 5px; background: #eee; height: 8px; border-radius: 4px; overflow: hidden;">' +
-            '<div id="omniosfiles-progress-bar" style="height: 100%; background: #28a745; width: 0%; transition: width 0.3s;"></div>' +
-            '</div>' +
-            '</div>' +
-            '<!-- Hidden file input for uploads -->' +
-            '<input type="file" id="omniosfiles-file-input" style="display: none;" onchange="pluginHandler.omniosfiles.handleFileSelect(this);">' +
-            '</div>' +
-            '<style>' +
-            '#omniosfiles-table tbody tr:hover { background: #f5f5f5; }' +
-            '#omniosfiles-table tbody tr td { padding: 6px 8px; border-bottom: 1px solid #eee; }' +
-            '#omniosfiles-toolbar button { padding: 5px 10px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 3px; }' +
-            '#omniosfiles-toolbar button:hover { background: #e9e9e9; }' +
-            '.omniosfiles-action-btn { padding: 2px 6px; margin: 0 2px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 3px; font-size: 12px; }' +
-            '.omniosfiles-action-btn:hover { background: #e9e9e9; }' +
-            '.omniosfiles-action-btn.danger:hover { background: #ffebee; border-color: #f44336; }' +
-            '</style>';
-    };
-
-    /**
-     * Called when device panel refreshes - initializes the plugin
-     */
+    var service = require('./server').create(parent, require('./server').settings(require('./config.json').settings));
+    obj.serveraction = service.serveraction;
+    obj.exports = ['onDeviceRefreshEnd', 'result', 'request', 'render', 'navigate', 'mutate', 'upload', 'download', 'uploadNext', 'downloadNext', 'finish', 'cancel', 'status', 'hash'];
     obj.onDeviceRefreshEnd = function () {
-        console.log('[omniosfiles] onDeviceRefreshEnd called');
-        if (typeof document === 'undefined') { console.log('[omniosfiles] document undefined'); return; }
-        if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) {
-            console.log('[omniosfiles] currentNode undefined or no _id');
-            return;
-        }
-        console.log('[omniosfiles] currentNode._id:', currentNode._id);
-
-        // Register plugin tab if not already registered
-        if (typeof pluginHandler !== 'undefined' && typeof pluginHandler.registerPluginTab === 'function') {
-            console.log('[omniosfiles] Registering plugin tab...');
-            pluginHandler.registerPluginTab({
-                tabId: 'omniosfiles',
-                tabTitle: 'OmniOS Files'
+        if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) return;
+        var p = pluginHandler.omniosfiles;
+        p.nodes = p.nodes || {}; p.pending = p.pending || {}; p.transfers = p.transfers || {}; p.sequence = p.sequence || 0;
+        var node = currentNode._id;
+        var state = p.nodes[node] || (p.nodes[node] = {path: '/', items: [], status: '', caps: null});
+        pluginHandler.registerPluginTab({tabId: 'omniosfiles', tabTitle: 'OmniOS Files'});
+        p.render(node);
+        if (!state.checking) {
+            state.checking = true;
+            p.request(node, 'capabilities', {}, function (data, error) {
+                state.checking = false; state.caps = error ? null : data;
+                if (error) p.status(node, error); else p.navigate(node, state.path);
+                p.render(node);
             });
-            console.log('[omniosfiles] Plugin tab registered');
-        } else {
-            console.log('[omniosfiles] pluginHandler.registerPluginTab not available');
-        }
-
-        // Initialize state
-        if (!pluginHandler.omniosfiles.state) {
-            pluginHandler.omniosfiles.state = {};
-        }
-
-        // Initialize settings with defaults
-        if (!pluginHandler.omniosfiles.settingsCache) {
-            pluginHandler.omniosfiles.settingsCache = {
-                basePath: '/var/nr',
-                filterMode: 'blacklist',
-                allowedExtensions: [],
-                blockedExtensions: ['.exe', '.bat', '.cmd', '.com', '.scr', '.pif'],
-                maxFileSize: 3221225472,
-                chunkSize: 65536,
-                enableChecksum: true
-            };
-        }
-
-        var nodeId = currentNode._id;
-        if (!pluginHandler.omniosfiles.state[nodeId]) {
-            pluginHandler.omniosfiles.state[nodeId] = {
-                currentPath: '/',
-                items: [],
-                transfers: {},
-                pendingRequests: {}
-            };
-        }
-
-        // Populate the tab content
-        var tabDiv = document.getElementById('omniosfiles');
-        console.log('[omniosfiles] tabDiv:', tabDiv);
-        if (tabDiv && !tabDiv.querySelector('#omniosfiles-container')) {
-            console.log('[omniosfiles] Populating tab content...');
-            tabDiv.innerHTML = pluginHandler.omniosfiles.getPluginTabContent();
-        }
-
-        // Refresh file list after a short delay
-        setTimeout(function () {
-            if (document.getElementById('omniosfiles-container')) {
-                console.log('[omniosfiles] Refreshing file list...');
-                pluginHandler.omniosfiles.refresh();
-            }
-        }, 100);
-    };
-
-    /**
-     * Navigate to a directory
-     */
-    obj.navigateTo = function (path) {
-        if (typeof currentNode === 'undefined' || !currentNode) return false;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return false;
-
-        state.currentPath = path;
-        pluginHandler.omniosfiles.refresh();
-        return false;
-    };
-
-    /**
-     * Refresh current directory listing
-     */
-    obj.refresh = function () {
-        console.log('[omniosfiles] refresh() called');
-        if (typeof currentNode === 'undefined' || !currentNode) { console.log('[omniosfiles] refresh: no currentNode'); return false; }
-        if (typeof meshserver === 'undefined') { console.log('[omniosfiles] refresh: no meshserver'); return false; }
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) { console.log('[omniosfiles] refresh: no state'); return false; }
-
-        var requestId = 'list_' + Date.now();
-
-        pluginHandler.omniosfiles.setStatus('Loading...');
-
-        console.log('[omniosfiles] Sending listDir request:', {
-            nodeid: currentNode._id,
-            path: state.currentPath,
-            requestId: requestId
-        });
-
-        meshserver.send({
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            pluginaction: 'listDir',
-            nodeid: currentNode._id,
-            sessionid: meshserver.socketid,
-            requestId: requestId,
-            path: state.currentPath
-        });
-
-        return false;
-    };
-
-    /**
-     * Handle directory listing result
-     */
-    obj.listDirResult = function (data) {
-        console.log('[omniosfiles] listDirResult received:', data);
-        if (typeof document === 'undefined') return;
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return;
-
-        if (!data.success) {
-            console.log('[omniosfiles] listDirResult error:', data.error);
-            pluginHandler.omniosfiles.setStatus('Error: ' + data.error);
-            return;
-        }
-
-        console.log('[omniosfiles] listDirResult items:', data.items ? data.items.length : 0);
-        state.currentPath = data.path;
-        state.items = data.items || [];
-
-        pluginHandler.omniosfiles.renderFileList();
-        pluginHandler.omniosfiles.updateBreadcrumb();
-        pluginHandler.omniosfiles.setStatus(state.items.length + ' items');
-    };
-
-    /**
-     * Render file list table
-     */
-    obj.renderFileList = function () {
-        if (typeof document === 'undefined') return;
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return;
-
-        var tbody = document.getElementById('omniosfiles-tbody');
-        if (!tbody) return;
-
-        var html = '';
-
-        // Parent directory link (if not at root)
-        if (state.currentPath !== '/') {
-            var parentPath = state.currentPath.replace(/\/[^\/]+\/?$/, '') || '/';
-            html += '<tr style="cursor: pointer;" onclick="pluginHandler.omniosfiles.navigateTo(\'' +
-                pluginHandler.omniosfiles.escapeHtml(parentPath) + '\');">' +
-                '<td>📁 ..</td><td></td><td></td><td></td></tr>';
-        }
-
-        // File/directory items
-        for (var i = 0; i < state.items.length; i++) {
-            var item = state.items[i];
-            var icon = item.isDirectory ? '📁' : '📄';
-            var size = item.isDirectory ? '' : pluginHandler.omniosfiles.formatSize(item.size);
-            var mtime = new Date(item.mtime).toLocaleString();
-            var itemPath = item.path;
-
-            html += '<tr>';
-
-            // Name column
-            if (item.isDirectory) {
-                html += '<td style="cursor: pointer;" onclick="pluginHandler.omniosfiles.navigateTo(\'' +
-                    pluginHandler.omniosfiles.escapeHtml(itemPath) + '\');">' +
-                    icon + ' ' + pluginHandler.omniosfiles.escapeHtml(item.name) + '</td>';
-            } else {
-                html += '<td>' + icon + ' ' + pluginHandler.omniosfiles.escapeHtml(item.name) + '</td>';
-            }
-
-            // Size column
-            html += '<td style="text-align: right;">' + size + '</td>';
-
-            // Modified column
-            html += '<td>' + mtime + '</td>';
-
-            // Actions column
-            html += '<td style="text-align: center;">';
-            if (!item.isDirectory) {
-                html += '<button class="omniosfiles-action-btn" onclick="pluginHandler.omniosfiles.downloadFile(\'' +
-                    pluginHandler.omniosfiles.escapeHtml(itemPath) + '\');" title="Download">⬇️</button>';
-            }
-            html += '<button class="omniosfiles-action-btn" onclick="pluginHandler.omniosfiles.showRenameDialog(\'' +
-                pluginHandler.omniosfiles.escapeHtml(itemPath) + '\', \'' +
-                pluginHandler.omniosfiles.escapeHtml(item.name) + '\');" title="Rename">✏️</button>';
-            html += '<button class="omniosfiles-action-btn danger" onclick="pluginHandler.omniosfiles.confirmDelete(\'' +
-                pluginHandler.omniosfiles.escapeHtml(itemPath) + '\', \'' +
-                pluginHandler.omniosfiles.escapeHtml(item.name) + '\', ' + item.isDirectory + ');" title="Delete">🗑️</button>';
-            html += '</td>';
-
-            html += '</tr>';
-        }
-
-        if (state.items.length === 0 && state.currentPath === '/') {
-            html += '<tr><td colspan="4" style="padding: 20px; text-align: center; color: #999;">Directory is empty</td></tr>';
-        }
-
-        tbody.innerHTML = html;
-    };
-
-    /**
-     * Update breadcrumb navigation
-     */
-    obj.updateBreadcrumb = function () {
-        if (typeof document === 'undefined') return;
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return;
-
-        var breadcrumb = document.getElementById('omniosfiles-breadcrumb');
-        if (!breadcrumb) return;
-
-        var parts = state.currentPath.split('/').filter(function (p) { return p; });
-        var html = '<span style="color: #666;">📂</span> ';
-        html += '<a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\'/\');">/var/nr</a>';
-
-        var path = '';
-        for (var i = 0; i < parts.length; i++) {
-            path += '/' + parts[i];
-            html += ' / <a href="#" onclick="return pluginHandler.omniosfiles.navigateTo(\'' +
-                pluginHandler.omniosfiles.escapeHtml(path) + '\');">' +
-                pluginHandler.omniosfiles.escapeHtml(parts[i]) + '</a>';
-        }
-
-        breadcrumb.innerHTML = html;
-    };
-
-    /**
-     * Show upload file dialog
-     */
-    obj.showUploadDialog = function () {
-        var input = document.getElementById('omniosfiles-file-input');
-        if (input) input.click();
-        return false;
-    };
-
-    /**
-     * Handle file selection for upload
-     */
-    obj.handleFileSelect = function (input) {
-        if (!input.files || input.files.length === 0) return;
-
-        var file = input.files[0];
-        input.value = ''; // Reset for next selection
-
-        pluginHandler.omniosfiles.uploadFile(file);
-    };
-
-    /**
-     * Start file upload
-     */
-    obj.uploadFile = function (file) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-        if (typeof meshserver === 'undefined') return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return;
-
-        var settings = pluginHandler.omniosfiles.settingsCache || {};
-        var maxSize = settings.maxFileSize || 3221225472;
-
-        // Validate file size
-        if (file.size > maxSize) {
-            alert('File size exceeds maximum allowed (' + Math.round(maxSize / 1073741824) + ' GB)');
-            return;
-        }
-
-        var requestId = 'upload_' + Date.now();
-        var targetPath = (state.currentPath === '/' ? '' : state.currentPath) + '/' + file.name;
-        var chunkSize = settings.chunkSize || 65536;
-        var totalChunks = Math.ceil(file.size / chunkSize);
-
-        // Store upload state
-        state.transfers[requestId] = {
-            type: 'upload',
-            file: file,
-            fileName: file.name,
-            totalSize: file.size,
-            chunkSize: chunkSize,
-            totalChunks: totalChunks,
-            currentChunk: 0,
-            inFlight: 0,
-            maxInFlight: 8,
-            cancelled: false,
-            clientChecksum: null
-        };
-
-        // Show progress
-        pluginHandler.omniosfiles.showProgress('Preparing upload: ' + file.name, 0);
-
-        // Compute checksum if enabled and file is not too large
-        if (settings.enableChecksum && file.size <= 104857600) { // 100MB limit for client checksum
-            pluginHandler.omniosfiles.computeClientChecksum(file, requestId, function (checksum) {
-                state.transfers[requestId].clientChecksum = checksum;
-                pluginHandler.omniosfiles.sendUploadStart(requestId, targetPath, file, checksum);
-            });
-        } else {
-            pluginHandler.omniosfiles.sendUploadStart(requestId, targetPath, file, null);
         }
     };
-
-    /**
-     * Compute SHA-256 checksum on client side
-     */
-    obj.computeClientChecksum = function (file, requestId, callback) {
-        var reader = new FileReader();
-
-        reader.onload = function (e) {
-            crypto.subtle.digest('SHA-256', e.target.result).then(function (hashBuffer) {
-                var hashArray = Array.from(new Uint8Array(hashBuffer));
-                var hashHex = hashArray.map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
-                callback(hashHex);
-            }).catch(function () {
-                callback(null);
-            });
-        };
-
-        reader.onerror = function () {
-            callback(null);
-        };
-
-        reader.readAsArrayBuffer(file);
+    obj.request = function (node, action, args, callback, id) {
+        var p = pluginHandler.omniosfiles;
+        id = id || ('b' + Date.now() + '-' + (++p.sequence));
+        if (p.pending[id]) { callback(null, 'Request is already pending'); return; }
+        var entry = {node: node, callback: callback};
+        p.pending[id] = entry;
+        entry.timer = setTimeout(function () {
+            if (p.pending[id] !== entry) return;
+            delete p.pending[id]; callback(null, 'Request timed out; device operation may still be running');
+        }, 35000);
+        try { meshserver.send(Object.assign({action: 'plugin', plugin: 'omniosfiles', pluginaction: action, nodeid: node, requestId: id, protocol: 2}, args)); }
+        catch (e) { clearTimeout(entry.timer); delete p.pending[id]; callback(null, 'Connection failed'); }
+        return id;
     };
-
-    /**
-     * Send upload start command
-     */
-    obj.sendUploadStart = function (requestId, targetPath, file, checksum) {
-        if (typeof meshserver === 'undefined') return;
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        meshserver.send({
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            pluginaction: 'startUpload',
-            nodeid: currentNode._id,
-            sessionid: meshserver.socketid,
-            requestId: requestId,
-            path: targetPath,
-            fileName: file.name,
-            totalSize: file.size,
-            checksum: checksum
+    obj.result = function (server, message) {
+        var p = pluginHandler.omniosfiles, entry = (p.pending || {})[message.requestId];
+        if (message.protocol !== 2 || !entry || entry.node !== message.nodeid) return;
+        clearTimeout(entry.timer); delete p.pending[message.requestId];
+        entry.callback(message.data, message.error || (message.data && message.data.error));
+    };
+    obj.status = function (node, text) {
+        var p = pluginHandler.omniosfiles;
+        if (p.nodes[node]) p.nodes[node].status = text;
+        p.render(node);
+    };
+    obj.navigate = function (node, path) {
+        var p = pluginHandler.omniosfiles, state = p.nodes[node];
+        var token = {}; state.listing = token;
+        p.request(node, 'listDir', {path: path}, function (data, error) {
+            if (state.listing !== token) return;
+            state.listing = null;
+            if (error) { p.status(node, error); return; }
+            state.path = data.path; state.items = data.items; p.render(node);
         });
     };
-
-    /**
-     * Handle upload ready signal
-     */
-    obj.uploadReady = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state || !state.transfers[data.requestId]) return;
-
-        var transfer = state.transfers[data.requestId];
-        if (transfer.cancelled) return;
-
-        pluginHandler.omniosfiles.showProgress('Uploading: ' + transfer.fileName, 0);
-
-        // Start sending chunks
-        for (var i = 0; i < transfer.maxInFlight && i < transfer.totalChunks; i++) {
-            pluginHandler.omniosfiles.sendUploadChunk(data.requestId, i);
-        }
-    };
-
-    /**
-     * Send an upload chunk
-     */
-    obj.sendUploadChunk = function (requestId, chunkIndex) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-        if (typeof meshserver === 'undefined') return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state || !state.transfers[requestId]) return;
-
-        var transfer = state.transfers[requestId];
-        if (transfer.cancelled) return;
-
-        var start = chunkIndex * transfer.chunkSize;
-        var end = Math.min(start + transfer.chunkSize, transfer.file.size);
-        var slice = transfer.file.slice(start, end);
-
-        var reader = new FileReader();
-        reader.onload = function (e) {
-            if (transfer.cancelled) return;
-
-            var base64 = btoa(String.fromCharCode.apply(null, new Uint8Array(e.target.result)));
-
-            meshserver.send({
-                action: 'plugin',
-                plugin: 'omniosfiles',
-                pluginaction: 'uploadChunk',
-                nodeid: currentNode._id,
-                sessionid: meshserver.socketid,
-                requestId: requestId,
-                chunkIndex: chunkIndex,
-                data: base64,
-                isLast: (end >= transfer.file.size)
-            });
-
-            transfer.inFlight++;
-        };
-        reader.readAsArrayBuffer(slice);
-    };
-
-    /**
-     * Handle upload acknowledgment
-     */
-    obj.uploadAck = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state || !state.transfers[data.requestId]) return;
-
-        var transfer = state.transfers[data.requestId];
-        transfer.inFlight--;
-        transfer.currentChunk++;
-
-        var percent = Math.round((transfer.currentChunk / transfer.totalChunks) * 100);
-        pluginHandler.omniosfiles.showProgress('Uploading: ' + transfer.fileName, percent);
-
-        // Send next chunk if available
-        var nextChunk = transfer.currentChunk + transfer.inFlight;
-        if (nextChunk < transfer.totalChunks && !transfer.cancelled) {
-            pluginHandler.omniosfiles.sendUploadChunk(data.requestId, nextChunk);
-        }
-    };
-
-    /**
-     * Handle upload complete
-     */
-    obj.uploadComplete = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return;
-
-        var transfer = state.transfers[data.requestId];
-        delete state.transfers[data.requestId];
-
-        pluginHandler.omniosfiles.hideProgress();
-
-        if (data.checksumMatch === false) {
-            alert('Upload completed but checksum verification failed. File may be corrupted.');
-        } else {
-            pluginHandler.omniosfiles.setStatus('Upload complete: ' + (transfer ? transfer.fileName : 'file'));
-        }
-
-        // Refresh file list
-        pluginHandler.omniosfiles.refresh();
-    };
-
-    /**
-     * Handle upload error
-     */
-    obj.uploadError = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (state && state.transfers[data.requestId]) {
-            delete state.transfers[data.requestId];
-        }
-
-        pluginHandler.omniosfiles.hideProgress();
-        alert('Upload failed: ' + data.error);
-    };
-
-    /**
-     * Handle upload cancelled
-     */
-    obj.uploadCancelled = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (state && state.transfers[data.requestId]) {
-            delete state.transfers[data.requestId];
-        }
-
-        pluginHandler.omniosfiles.hideProgress();
-        pluginHandler.omniosfiles.setStatus('Upload cancelled');
-    };
-
-    /**
-     * Start file download
-     */
-    obj.downloadFile = function (filePath) {
-        if (typeof currentNode === 'undefined' || !currentNode) return false;
-        if (typeof meshserver === 'undefined') return false;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return false;
-
-        var requestId = 'download_' + Date.now();
-
-        state.transfers[requestId] = {
-            type: 'download',
-            path: filePath,
-            chunks: [],
-            totalSize: 0,
-            totalChunks: 0,
-            receivedChunks: 0,
-            fileName: '',
-            cancelled: false
-        };
-
-        pluginHandler.omniosfiles.showProgress('Preparing download...', 0);
-
-        meshserver.send({
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            pluginaction: 'startDownload',
-            nodeid: currentNode._id,
-            sessionid: meshserver.socketid,
-            requestId: requestId,
-            path: filePath
+    obj.render = function (node) {
+        if (typeof currentNode === 'undefined' || !currentNode || currentNode._id !== node) return;
+        var p = pluginHandler.omniosfiles, state = p.nodes[node], host = document.getElementById('omniosfiles');
+        if (!host || !state) return;
+        host.textContent = '';
+        function element(tag, text, parent) { var e = document.createElement(tag); if (text !== undefined) e.textContent = text; parent.appendChild(e); return e; }
+        function button(label, fn, disabled, parent) { var b = element('button', label, parent); b.disabled = !!disabled; b.addEventListener('click', fn); b.style.margin = '4px'; return b; }
+        var bar = element('div', undefined, host), caps = state.caps;
+        var active = Object.keys(p.transfers).some(function (id) { return p.transfers[id].node === node; });
+        button('Refresh', function () { p.onDeviceRefreshEnd(); }, false, bar);
+        button('Upload', function () {
+            var input = document.createElement('input'); input.type = 'file';
+            input.addEventListener('change', function () { if (input.files[0]) p.upload(node, state.path, input.files[0]); }); input.click();
+        }, !caps || !caps.write || active, bar);
+        button('New folder', function () { var name = prompt('Folder name:'); if (name && !/[\/\0]/.test(name) && name !== '.' && name !== '..') p.mutate(node, 'createDir', {path: (state.path === '/' ? '' : state.path) + '/' + name}); }, !caps || !caps.write || active, bar);
+        element('div', '/var/nr' + (state.path === '/' ? '' : state.path), host);
+        element('p', state.status || (caps ? 'Ready' : 'Checking access...'), host);
+        Object.keys(p.transfers).forEach(function (id) {
+            var t = p.transfers[id]; if (t.node !== node) return;
+            var row = element('div', t.name + ': ' + t.offset + ' / ' + t.total + ' bytes' + (t.cancelling ? ' (cancelling)' : ''), host);
+            button('Cancel', function () { p.cancel(id); }, t.cancelling, row);
         });
-
-        return false;
-    };
-
-    /**
-     * Handle download start
-     */
-    obj.downloadStart = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state || !state.transfers[data.requestId]) return;
-
-        var transfer = state.transfers[data.requestId];
-        transfer.fileName = data.fileName;
-        transfer.totalSize = data.totalSize;
-        transfer.totalChunks = data.totalChunks;
-        transfer.chunks = new Array(data.totalChunks);
-
-        pluginHandler.omniosfiles.showProgress('Downloading: ' + transfer.fileName, 0);
-
-        // Request first batch of chunks
-        for (var i = 0; i < 8 && i < data.totalChunks; i++) {
-            pluginHandler.omniosfiles.requestDownloadChunk(data.requestId, i);
-        }
-    };
-
-    /**
-     * Request a download chunk
-     */
-    obj.requestDownloadChunk = function (requestId, chunkIndex) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-        if (typeof meshserver === 'undefined') return;
-
-        meshserver.send({
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            pluginaction: 'requestChunk',
-            nodeid: currentNode._id,
-            sessionid: meshserver.socketid,
-            requestId: requestId,
-            chunkIndex: chunkIndex
+        if (!caps) return;
+        if (state.path !== '/') button('Parent directory', function () { p.navigate(node, state.path.replace(/\/[^/]+\/?$/, '') || '/'); }, false, host);
+        var table = element('table', undefined, host); table.style.width = '100%';
+        state.items.forEach(function (item) {
+            var row = element('tr', undefined, table);
+            var cell = element('td', undefined, row);
+            if (item.isDirectory && item.supported) button(item.name + '/', function () { p.navigate(node, item.path); }, false, cell);
+            else element('span', item.name + (item.isLink ? ' (symlink)' : !item.supported ? ' (unsupported)' : ''), cell);
+            element('td', item.isDirectory ? '' : String(item.size) + ' bytes', row);
+            element('td', new Date(item.mtime).toLocaleString(), row);
+            var ops = element('td', undefined, row);
+            if (!item.isDirectory) button('Download', function () { p.download(node, item); }, active || !item.supported, ops);
+            button('Rename', function () {
+                var name = prompt('New name:', item.name);
+                if (name && !/[\/\0]/.test(name) && name !== '.' && name !== '..') p.mutate(node, 'rename', {srcPath: item.path, dstPath: item.path.replace(/[^/]+$/, '') + name});
+            }, !caps.write || active || !item.supported, ops);
+            button('Delete', function () { if (confirm('Delete ' + item.name + (item.isDirectory ? ' and its contents?' : '?'))) p.mutate(node, 'delete', {path: item.path}); }, !caps.write || active || !item.supported, ops);
         });
+        if (!state.items.length) element('p', 'Directory is empty', host);
     };
-
-    /**
-     * Handle download chunk
-     */
-    obj.downloadChunk = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state || !state.transfers[data.requestId]) return;
-
-        var transfer = state.transfers[data.requestId];
-        if (transfer.cancelled) return;
-
-        // Store chunk
-        transfer.chunks[data.chunkIndex] = atob(data.data);
-        transfer.receivedChunks++;
-
-        var percent = Math.round((transfer.receivedChunks / transfer.totalChunks) * 100);
-        pluginHandler.omniosfiles.showProgress('Downloading: ' + transfer.fileName, percent);
-
-        // Request next chunk (sliding window)
-        var nextChunk = data.chunkIndex + 8;
-        if (nextChunk < transfer.totalChunks && !transfer.cancelled) {
-            pluginHandler.omniosfiles.requestDownloadChunk(data.requestId, nextChunk);
+    obj.mutate = function (node, action, args) {
+        var p = pluginHandler.omniosfiles;
+        p.request(node, action, args, function (data, error) { p.status(node, error || 'Operation completed'); if (!error) p.navigate(node, p.nodes[node].path); });
+    };
+    obj.upload = function (node, path, file) {
+        var p = pluginHandler.omniosfiles, caps = p.nodes[node].caps;
+        if (!caps || !caps.write || file.size > caps.maxFileSize) { p.status(node, 'Access denied or file exceeds the qualified size limit'); return; }
+        var id = 'u' + Date.now() + '-' + (++p.sequence);
+        var t = {id: id, node: node, name: file.name, file: file, upload: true, total: file.size, offset: 0, index: 0, hash: p.hash(), path: path};
+        p.transfers[id] = t;
+        p.request(node, 'startUpload', {path: (path === '/' ? '' : path) + '/' + file.name, totalSize: file.size}, function (data, error) {
+            if (error) { p.finish(t, error); return; }
+            t.started = true; p.uploadNext(t);
+        }, id);
+        p.render(node);
+    };
+    obj.uploadNext = function (t) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t) return;
+        if (t.cancelling) { p.cancel(t.id); return; }
+        if (t.offset === t.total) {
+            p.request(t.node, 'finishUpload', {checksum: t.hash.digest()}, function (data, error) { p.finish(t, error); }, t.id); return;
         }
+        var reader = new FileReader(); t.reader = reader;
+        reader.onerror = function () { p.finish(t, 'Cannot read local file'); };
+        reader.onload = function () {
+            t.reader = null;
+            if (p.transfers[t.id] !== t) return;
+            if (t.cancelling) { p.cancel(t.id); return; }
+            var bytes = new Uint8Array(reader.result), text = '';
+            for (var i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+            t.hash.update(bytes);
+            p.request(t.node, 'uploadChunk', {chunkIndex: t.index, data: btoa(text)}, function (data, error) {
+                if (error) { p.finish(t, error); return; }
+                if (data.chunkIndex !== t.index || data.receivedBytes !== t.offset + bytes.length) { p.finish(t, 'Invalid upload acknowledgment'); return; }
+                t.offset += bytes.length; t.index++; p.render(t.node); p.uploadNext(t);
+            }, t.id);
+        };
+        reader.readAsArrayBuffer(t.file.slice(t.offset, Math.min(t.offset + 65536, t.total)));
     };
-
-    /**
-     * Handle download complete
-     */
-    obj.downloadComplete = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state || !state.transfers[data.requestId]) return;
-
-        var transfer = state.transfers[data.requestId];
-
-        pluginHandler.omniosfiles.hideProgress();
-
-        // Combine all chunks into a Blob
-        var blobParts = [];
-        for (var i = 0; i < transfer.chunks.length; i++) {
-            var chunk = transfer.chunks[i];
-            if (chunk) {
-                var bytes = new Uint8Array(chunk.length);
-                for (var j = 0; j < chunk.length; j++) {
-                    bytes[j] = chunk.charCodeAt(j);
+    obj.download = function (node, item) {
+        var p = pluginHandler.omniosfiles, caps = p.nodes[node].caps;
+        if (!caps || item.size > caps.maxFileSize) { p.status(node, 'File exceeds the qualified size limit'); return; }
+        var t = {id: 'd' + Date.now() + '-' + (++p.sequence), node: node, name: item.name, upload: false, total: item.size, offset: 0, index: 0, hash: p.hash(), chunks: []};
+        p.transfers[t.id] = t;
+        function begin() {
+            if (p.transfers[t.id] !== t) { if (t.writer) t.writer.abort().catch(function () {}); return; }
+            p.request(node, 'startDownload', {path: item.path}, function (data, error) {
+                if (error) { p.finish(t, error); return; }
+                t.started = true;
+                if (!Number.isSafeInteger(data.totalSize) || data.totalSize < 0 || data.totalSize > caps.maxFileSize) { p.finish(t, 'Invalid file size'); return; }
+                t.total = data.totalSize; p.downloadNext(t);
+            }, t.id);
+        }
+        // Request the picker synchronously during the user's click gesture.
+        if (typeof window.showSaveFilePicker === 'function') {
+            window.showSaveFilePicker({suggestedName: item.name}).then(function (handle) { return handle.createWritable(); }).then(function (writer) { t.writer = writer; begin(); }).catch(function (error) { p.finish(t, 'Download was not started: ' + error.message); });
+        } else begin();
+        p.render(node);
+    };
+    obj.downloadNext = function (t) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t) return;
+        if (t.cancelling) { p.cancel(t.id); return; }
+        if (t.offset === t.total) {
+            p.request(t.node, 'finishDownload', {checksum: t.hash.digest()}, function (data, error) {
+                if (error) { p.finish(t, error); return; }
+                if (t.writer) t.writer.close().then(function () { t.writer = null; p.finish(t); }).catch(function () { p.finish(t, 'Cannot save download'); });
+                else {
+                    var url = URL.createObjectURL(new Blob(t.chunks, {type: 'application/octet-stream'}));
+                    var a = document.createElement('a'); a.href = url; a.download = t.name; document.body.appendChild(a); a.click(); a.remove();
+                    setTimeout(function () { URL.revokeObjectURL(url); }, 1000); p.finish(t);
                 }
-                blobParts.push(bytes);
-            }
+            }, t.id); return;
         }
-
-        var blob = new Blob(blobParts, { type: 'application/octet-stream' });
-
-        // Trigger browser download
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = transfer.fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-
-        delete state.transfers[data.requestId];
-        pluginHandler.omniosfiles.setStatus('Download complete: ' + transfer.fileName);
+        p.request(t.node, 'requestChunk', {chunkIndex: t.index}, function (data, error) {
+            if (error) { p.finish(t, error); return; }
+            try {
+                var text = atob(data.data), bytes = new Uint8Array(text.length);
+                if (data.chunkIndex !== t.index || text.length !== Math.min(65536, t.total - t.offset)) throw Error('Invalid download chunk');
+                for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+                t.hash.update(bytes);
+                var save = t.writer ? t.writer.write(bytes) : Promise.resolve(t.chunks.push(bytes));
+                save.then(function () { t.offset += bytes.length; t.index++; p.render(t.node); p.downloadNext(t); }).catch(function () { p.finish(t, 'Cannot write download'); });
+            } catch (e) { p.finish(t, e.message); }
+        }, t.id);
     };
-
-    /**
-     * Handle download error
-     */
-    obj.downloadError = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (state && state.transfers[data.requestId]) {
-            delete state.transfers[data.requestId];
+    obj.finish = function (t, error) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t) return;
+        delete p.transfers[t.id];
+        if (t.writer) t.writer.abort().catch(function () {});
+        if (error && t.started && !p.pending[t.id]) p.request(t.node, 'cancel', {}, function () {}, t.id);
+        p.status(t.node, error || 'Completed: ' + t.name);
+        if (!error && t.upload) p.navigate(t.node, t.path);
+    };
+    obj.cancel = function (id) {
+        var p = pluginHandler.omniosfiles, t = p.transfers[id];
+        if (!t) return;
+        t.cancelling = true; p.render(t.node);
+        if (p.pending[id] || t.reader) return;
+        if (!t.started) { p.finish(t, 'Cancelled before transfer'); return; }
+        p.request(t.node, 'cancel', {}, function (data, error) { t.started = false; p.finish(t, error || 'Cancelled'); }, id);
+    };
+    obj.hash = function () {
+        // Incremental SHA-256; holds one 64-byte block regardless of file size.
+        var h = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+        var k = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+        var block = new Uint8Array(64), used = 0, length = 0, final = null;
+        function r(x,n) { return (x >>> n) | (x << (32-n)); }
+        function compress() {
+            var w = new Int32Array(64), i;
+            for (i=0;i<16;i++) w[i]=(block[i*4]<<24)|(block[i*4+1]<<16)|(block[i*4+2]<<8)|block[i*4+3];
+            for (i=16;i<64;i++) { var x=w[i-15],y=w[i-2]; w[i]=(w[i-16]+(r(x,7)^r(x,18)^(x>>>3))+w[i-7]+(r(y,17)^r(y,19)^(y>>>10)))|0; }
+            var a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],v=h[7];
+            for (i=0;i<64;i++) { var t1=(v+(r(e,6)^r(e,11)^r(e,25))+((e&f)^(~e&g))+k[i]+w[i])|0; var t2=((r(a,2)^r(a,13)^r(a,22))+((a&b)^(a&c)^(b&c)))|0; v=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0; }
+            var out=[a,b,c,d,e,f,g,v]; for(i=0;i<8;i++)h[i]=(h[i]+out[i])|0;
         }
-
-        pluginHandler.omniosfiles.hideProgress();
-        alert('Download failed: ' + data.error);
+        function push(byte) { block[used++]=byte; if(used===64){compress();used=0;} }
+        return {update: function(bytes){if(final)throw Error('Hash already finalized');length+=bytes.length;for(var i=0;i<bytes.length;i++)push(bytes[i]);}, digest:function(){
+            if(final)return final;var bits=length*8;push(128);while(used!==56)push(0);var high=Math.floor(bits/4294967296),low=bits>>>0;
+            for(var n=24;n>=0;n-=8)push((high>>>n)&255);for(n=24;n>=0;n-=8)push((low>>>n)&255);
+            final=h.map(function(x){return ('00000000'+(x>>>0).toString(16)).slice(-8);}).join('');return final;
+        }};
     };
-
-    /**
-     * Handle download cancelled
-     */
-    obj.downloadCancelled = function (data) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (state && state.transfers[data.requestId]) {
-            delete state.transfers[data.requestId];
-        }
-
-        pluginHandler.omniosfiles.hideProgress();
-        pluginHandler.omniosfiles.setStatus('Download cancelled');
-    };
-
-    /**
-     * Cancel active transfer
-     */
-    obj.cancelTransfer = function () {
-        if (typeof currentNode === 'undefined' || !currentNode) return false;
-        if (typeof meshserver === 'undefined') return false;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return false;
-
-        for (var requestId in state.transfers) {
-            var transfer = state.transfers[requestId];
-            transfer.cancelled = true;
-
-            meshserver.send({
-                action: 'plugin',
-                plugin: 'omniosfiles',
-                pluginaction: transfer.type === 'upload' ? 'cancelUpload' : 'cancelDownload',
-                nodeid: currentNode._id,
-                sessionid: meshserver.socketid,
-                requestId: requestId
-            });
-        }
-
-        return false;
-    };
-
-    /**
-     * Show new directory dialog
-     */
-    obj.showNewDirDialog = function () {
-        var name = prompt('Enter new folder name:');
-        if (!name) return false;
-
-        pluginHandler.omniosfiles.createDirectory(name);
-        return false;
-    };
-
-    /**
-     * Create new directory
-     */
-    obj.createDirectory = function (name) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-        if (typeof meshserver === 'undefined') return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return;
-
-        var newPath = (state.currentPath === '/' ? '' : state.currentPath) + '/' + name;
-
-        meshserver.send({
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            pluginaction: 'createDir',
-            nodeid: currentNode._id,
-            sessionid: meshserver.socketid,
-            requestId: 'mkdir_' + Date.now(),
-            path: newPath
-        });
-    };
-
-    /**
-     * Handle create directory result
-     */
-    obj.createDirResult = function (data) {
-        if (data.success) {
-            pluginHandler.omniosfiles.refresh();
-        } else {
-            alert('Failed to create directory: ' + data.error);
-        }
-    };
-
-    /**
-     * Confirm file/directory deletion
-     */
-    obj.confirmDelete = function (path, name, isDirectory) {
-        var msg = 'Are you sure you want to delete ' +
-            (isDirectory ? 'folder' : 'file') + ' "' + name + '"?';
-        if (isDirectory) {
-            msg += '\n\nThis will delete all contents inside the folder.';
-        }
-
-        if (confirm(msg)) {
-            pluginHandler.omniosfiles.deleteItem(path);
-        }
-        return false;
-    };
-
-    /**
-     * Delete file or directory
-     */
-    obj.deleteItem = function (path) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-        if (typeof meshserver === 'undefined') return;
-
-        meshserver.send({
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            pluginaction: 'delete',
-            nodeid: currentNode._id,
-            sessionid: meshserver.socketid,
-            requestId: 'delete_' + Date.now(),
-            path: path
-        });
-    };
-
-    /**
-     * Handle delete result
-     */
-    obj.deleteResult = function (data) {
-        if (data.success) {
-            pluginHandler.omniosfiles.refresh();
-        } else {
-            alert('Failed to delete: ' + data.error);
-        }
-    };
-
-    /**
-     * Show rename dialog
-     */
-    obj.showRenameDialog = function (path, currentName) {
-        var newName = prompt('Enter new name:', currentName);
-        if (!newName || newName === currentName) return false;
-
-        pluginHandler.omniosfiles.renameItem(path, newName);
-        return false;
-    };
-
-    /**
-     * Rename file or directory
-     */
-    obj.renameItem = function (srcPath, newName) {
-        if (typeof currentNode === 'undefined' || !currentNode) return;
-        if (typeof meshserver === 'undefined') return;
-
-        var state = pluginHandler.omniosfiles.state[currentNode._id];
-        if (!state) return;
-
-        var parentPath = srcPath.replace(/\/[^\/]+\/?$/, '') || '/';
-        var dstPath = (parentPath === '/' ? '' : parentPath) + '/' + newName;
-
-        meshserver.send({
-            action: 'plugin',
-            plugin: 'omniosfiles',
-            pluginaction: 'rename',
-            nodeid: currentNode._id,
-            sessionid: meshserver.socketid,
-            requestId: 'rename_' + Date.now(),
-            srcPath: srcPath,
-            dstPath: dstPath
-        });
-    };
-
-    /**
-     * Handle rename result
-     */
-    obj.renameResult = function (data) {
-        if (data.success) {
-            pluginHandler.omniosfiles.refresh();
-        } else {
-            alert('Failed to rename: ' + data.error);
-        }
-    };
-
-    /**
-     * Handle file info result
-     */
-    obj.fileInfoResult = function (data) {
-        // Currently not used, but available for future features
-    };
-
-    /**
-     * Show progress bar
-     */
-    obj.showProgress = function (text, percent) {
-        if (typeof document === 'undefined') return;
-
-        var container = document.getElementById('omniosfiles-progress');
-        var textEl = document.getElementById('omniosfiles-progress-text');
-        var percentEl = document.getElementById('omniosfiles-progress-percent');
-        var barEl = document.getElementById('omniosfiles-progress-bar');
-
-        if (container) container.style.display = 'block';
-        if (textEl) textEl.textContent = text;
-        if (percentEl) percentEl.textContent = percent + '%';
-        if (barEl) barEl.style.width = percent + '%';
-    };
-
-    /**
-     * Hide progress bar
-     */
-    obj.hideProgress = function () {
-        if (typeof document === 'undefined') return;
-
-        var container = document.getElementById('omniosfiles-progress');
-        if (container) container.style.display = 'none';
-    };
-
-    /**
-     * Set status text
-     */
-    obj.setStatus = function (text) {
-        if (typeof document === 'undefined') return;
-
-        var statusEl = document.getElementById('omniosfiles-status');
-        if (statusEl) statusEl.textContent = text;
-    };
-
-    /**
-     * Format file size
-     */
-    obj.formatSize = function (bytes) {
-        if (bytes === 0) return '0 B';
-        var k = 1024;
-        var sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-        var i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-    };
-
-    /**
-     * Escape HTML
-     */
-    obj.escapeHtml = function (text) {
-        if (!text) return '';
-        return String(text).replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    };
-
     return obj;
 };

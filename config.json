@@ -16,9 +16,8 @@
   "versionHistoryUrl": "https://api.github.com/repos/Native-Robotics/MeshCentral-OmniOSFiles/tags",
   "meshCentralCompat": ">=1.1.35",
   "settings": {
-    "basePath": "/var/nr",
-    "runAsUser": "user",
-    "runAsGroup": "user",
+    "maxFileSize": 104857600,
+    "maxConcurrentTransfers": 3,
     "filterMode": "blacklist",
     "allowedExtensions": [],
     "blockedExtensions": [
@@ -28,10 +27,6 @@
       ".com",
       ".scr",
       ".pif"
-    ],
-    "maxFileSize": 3221225472,
-    "chunkSize": 65536,
-    "enableChecksum": true,
-    "maxConcurrentTransfers": 3
+    ]
   }
 }
