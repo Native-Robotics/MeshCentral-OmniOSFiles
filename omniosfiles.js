@@ -4,12 +4,13 @@ module.exports.omniosfiles = function (parent) {
     var service = require('./server').create(parent, require('./server').settings(require('./config.json').settings));
     obj.serveraction = service.serveraction;
     obj.server_startup = service.server_startup;
-    obj.exports = ['onDeviceRefreshEnd', 'result', 'request', 'render', 'navigate', 'mutate', 'upload', 'download', 'uploadNext', 'downloadNext', 'finish', 'cancel', 'status', 'formatSize', 'hash'];
+    obj.exports = ['onDeviceRefreshEnd', 'result', 'request', 'render', 'navigate', 'mutate', 'upload', 'download', 'uploadNext', 'downloadNext', 'finish', 'cancel', 'status', 'formatSize', 'icon', 'dialog', 'hash'];
     obj.onDeviceRefreshEnd = function () {
         if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) return;
         var p = pluginHandler.omniosfiles;
         p.nodes = p.nodes || {}; p.pending = p.pending || {}; p.transfers = p.transfers || {}; p.sequence = p.sequence || 0;
         var node = currentNode._id;
+        if (p.openDialog && p.openDialog.node !== node) p.openDialog.close();
         var state = p.nodes[node] || (p.nodes[node] = {path: '/', items: [], status: '', caps: null, loaded: false, listError: null});
         pluginHandler.registerPluginTab({tabId: 'omniosfiles', tabTitle: 'OmniOS Files'});
         p.render(node);
@@ -77,59 +78,78 @@ module.exports.omniosfiles = function (parent) {
             if (id) e.id = id; parent.appendChild(e); return e;
         }
         function button(label, title, fn, disabled, parent, className) {
-            var b = element('button', label, parent); b.type = 'button'; b.title = title;
+            var b = element('button', label, parent); b.type = 'button'; b.title = title; b.ariaLabel = title;
+            var icons = {'Refresh directory and permissions':'refresh','Upload file':'upload','Create directory':'folder','Parent directory':'folder','Open directory':'folder','Download':'download','Rename':'edit','Delete':'trash'};
+            if (icons[title]) { b.textContent = ''; b.appendChild(p.icon(icons[title])); if (label) element('span', label, b); }
             b.disabled = !!disabled; b.className = className || ''; b.addEventListener('click', fn); return b;
         }
         function link(label, path, parent) {
             var a = element('a', label, parent); a.href = '#';
             a.addEventListener('click', function (event) { event.preventDefault(); p.navigate(node, path); }); return a;
         }
+        // Adapted Willow spacing/colors; see THIRD_PARTY_NOTICES.md.
         element('style',
-            '#omniosfiles-container{min-height:360px;display:flex;flex-direction:column;border:1px solid #ddd;background:#fff;color:#222;}' +
-            '#omniosfiles-toolbar{padding:8px;background:#f5f5f5;border-bottom:1px solid #ddd;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}' +
-            '#omniosfiles-toolbar button{padding:5px 10px;cursor:pointer;border:1px solid #ccc;background:#fff;border-radius:3px;color:#222;}' +
-            '#omniosfiles-toolbar button:hover:not(:disabled),#omniosfiles-container .omniosfiles-action-btn:hover:not(:disabled){background:#e9e9e9;}' +
-            '#omniosfiles-container button:disabled{opacity:.5;cursor:default;}' +
-            '#omniosfiles-status{margin-left:auto;color:#666;font-size:12px;}' +
-            '#omniosfiles-breadcrumb{padding:8px;background:#fafafa;border-bottom:1px solid #eee;font-size:13px;}' +
-            '#omniosfiles-breadcrumb a{color:#235a8e;text-decoration:none;}' +
-            '#omniosfiles-breadcrumb a:hover{text-decoration:underline;}' +
-            '#omniosfiles-list{flex:1;overflow:auto;max-height:65vh;}' +
-            '#omniosfiles-table{width:100%;border-collapse:collapse;font-size:13px;}' +
-            '#omniosfiles-table thead{background:#f0f0f0;position:sticky;top:0;}' +
-            '#omniosfiles-table th{padding:8px;border-bottom:1px solid #ddd;text-align:left;}' +
-            '#omniosfiles-table tbody td{padding:6px 8px;border-bottom:1px solid #eee;}' +
-            '#omniosfiles-table tbody tr:hover{background:#f5f5f5;}' +
-            '#omniosfiles-table .omniosfiles-name{overflow-wrap:anywhere;}' +
-            '#omniosfiles-table .omniosfiles-directory{border:0;background:none;color:#235a8e;padding:0;font:inherit;cursor:pointer;text-align:left;}' +
-            '#omniosfiles-container .omniosfiles-action-btn{padding:2px 6px;margin:0 2px;cursor:pointer;border:1px solid #ccc;background:#fff;border-radius:3px;font-size:12px;}' +
-            '#omniosfiles-container .omniosfiles-action-btn.danger:hover:not(:disabled){background:#ffebee;border-color:#f44336;}' +
-            '#omniosfiles-table .omniosfiles-placeholder{padding:28px;text-align:center;color:#777;}' +
-            '#omniosfiles-container .omniosfiles-error{padding:10px 12px;background:#fff3f3;color:#a12622;border-bottom:1px solid #efcdcd;}' +
-            '#omniosfiles-container .omniosfiles-progress{padding:10px;background:#fff3cd;border-top:1px solid #ffc107;}' +
-            '#omniosfiles-container .omniosfiles-progress-label{display:flex;align-items:center;gap:10px;font-size:13px;}' +
-            '#omniosfiles-container .omniosfiles-progress-track{margin-top:6px;background:#eee;height:8px;border-radius:4px;overflow:hidden;}' +
-            '#omniosfiles-container .omniosfiles-progress-fill{height:100%;background:#28a745;transition:width .2s;}', host);
+            "#omniosfiles{--of-bg:#fff;--of-surface:#f2f3f7;--of-border:#ededf1;--of-text:#222;--of-muted:#666;--of-hover:#eaedf5;--of-accent:#235a8e;--of-error:#a12622}" +
+            ".night #omniosfiles{--of-bg:#202329;--of-surface:#292d35;--of-border:#424751;--of-text:#eee;--of-muted:#bdc3ce;--of-hover:#353e4b;--of-accent:#9bc8f5;--of-error:#ffaaa5}" +
+            "#omniosfiles-container{min-height:360px;display:flex;flex-direction:column;border:1px solid var(--of-border);border-radius:6px;background:var(--of-bg);color:var(--of-text);font:13px Arial,sans-serif;overflow:hidden}" +
+            "#omniosfiles-toolbar{min-height:48px;padding:4px 12px;background:var(--of-surface);border-bottom:1px solid var(--of-border);display:flex;align-items:center;gap:8px;flex-wrap:wrap}" +
+            "#omniosfiles-container button{font:inherit;color:inherit;cursor:pointer}" +
+            "#omniosfiles-toolbar button,#omniosfiles-container .omniosfiles-action-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--of-border);background:var(--of-bg);border-radius:4px}" +
+            "#omniosfiles-container button:hover:not(:disabled){background:var(--of-hover)}" +
+            "#omniosfiles-container button:focus-visible,#omniosfiles-container a:focus-visible{outline:2px solid var(--of-accent);outline-offset:2px}" +
+            "#omniosfiles-container button:disabled{opacity:.45;cursor:default}" +
+            "#omniosfiles-status{margin-left:auto;color:var(--of-muted);font-size:12px;overflow-wrap:anywhere}" +
+            "#omniosfiles-breadcrumb{padding:12px 16px;border-bottom:1px solid var(--of-border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;overflow-wrap:anywhere}" +
+            "#omniosfiles-breadcrumb a{color:var(--of-accent);text-decoration:none}" +
+            "#omniosfiles-breadcrumb a:hover{text-decoration:underline}" +
+            "#omniosfiles-list{flex:1;overflow:auto;max-height:65vh}" +
+            "#omniosfiles-table{width:100%;min-width:570px;border-collapse:collapse;font:inherit;color:inherit}" +
+            "#omniosfiles-table thead{background:var(--of-surface);position:sticky;top:0}" +
+            "#omniosfiles-table th{padding:12px 16px;border-bottom:1px solid var(--of-border);text-align:left;font-weight:600;color:var(--of-muted)}" +
+            "#omniosfiles-table tbody td{padding:9px 16px;border-bottom:1px solid var(--of-border)}" +
+            "#omniosfiles-table tbody tr:hover{background:var(--of-hover)}" +
+            "#omniosfiles-table .omniosfiles-name{overflow-wrap:anywhere}" +
+            "#omniosfiles-table .omniosfiles-directory{border:0;background:none;color:var(--of-accent);padding:0;text-align:left;display:inline-flex;align-items:center;gap:8px}" +
+            "#omniosfiles-container .omniosfiles-action-btn{padding:5px;margin:0 2px;background:transparent;border-color:transparent}" +
+            "#omniosfiles-container .danger{color:var(--of-error)}" +
+            "#omniosfiles-table .omniosfiles-placeholder{padding:40px 16px;text-align:center;color:var(--of-muted)}" +
+            "#omniosfiles-container .omniosfiles-error{padding:12px 16px;color:var(--of-error);border-bottom:1px solid var(--of-border);overflow-wrap:anywhere}" +
+            "#omniosfiles-container .omniosfiles-progress{padding:12px 16px;background:var(--of-surface);border-top:1px solid var(--of-border)}" +
+            "#omniosfiles-container .omniosfiles-progress-label{display:flex;align-items:center;gap:10px;flex-wrap:wrap;overflow-wrap:anywhere}" +
+            "#omniosfiles-container .omniosfiles-progress-track{margin-top:8px;background:var(--of-border);height:6px;border-radius:4px;overflow:hidden}" +
+            "#omniosfiles-container .omniosfiles-progress-fill{height:100%;background:var(--of-accent);transition:width .2s}" +
+            "#omniosfiles .of-icon{width:20px;height:20px;vertical-align:middle;flex-shrink:0}" +
+            "#omniosfiles .omniosfiles-name> .of-icon{margin-right:8px;color:var(--of-muted)}" +
+            ".of-dialog{box-sizing:border-box;width:420px;max-width:90vw;padding:24px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#222;font:14px Arial,sans-serif;box-shadow:0 3px 10px #0003}" +
+            ".night .of-dialog{background:#292d35;color:#eee;border-color:#424751}" +
+            ".of-dialog::backdrop{background:#0006}" +
+            ".of-dialog h3{margin:0 0 18px;font-size:18px}" +
+            ".of-dialog p{overflow-wrap:anywhere;white-space:pre-wrap}" +
+            ".of-dialog input{box-sizing:border-box;width:100%;margin:8px 0 16px;padding:8px;background:inherit;color:inherit;border:1px solid #888;border-radius:4px}" +
+            ".of-dialog .of-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}" +
+            ".of-dialog button{padding:7px 14px;cursor:pointer;border:1px solid #aaa;border-radius:4px;background:inherit;color:inherit}.of-dialog button:hover{background:#80808026}.of-dialog button:focus-visible{outline:2px solid #6aa5df;outline-offset:2px}" +
+            ".of-dialog .of-dialog-error{color:#b3342c}" +
+            ".night .of-dialog .of-dialog-error{color:#ffaaa5}", host);
         var panel = element('div', undefined, host, 'omniosfiles-container');
         var bar = element('div', undefined, panel, 'omniosfiles-toolbar'), caps = state.caps;
-        var active = Object.keys(p.transfers).some(function (id) { return p.transfers[id].node === node; });
-        button('🔄 Refresh', 'Refresh directory and permissions', function () { p.onDeviceRefreshEnd(); }, state.checking || !!state.listing, bar);
-        button('⬆️ Upload', 'Upload file', function () {
+        var active = !!state.mutating || Object.keys(p.transfers).some(function (id) { return p.transfers[id].node === node; });
+        button('Refresh', 'Refresh directory and permissions', function () { p.onDeviceRefreshEnd(); }, state.checking || !!state.listing, bar);
+        button('Upload', 'Upload file', function () {
+            var uploadPath = state.path;
             var input = document.createElement('input'); input.type = 'file';
-            input.addEventListener('change', function () { if (input.files[0]) p.upload(node, state.path, input.files[0]); }); input.click();
+            input.addEventListener('change', function () { if (input.files[0]) p.upload(node, uploadPath, input.files[0]); }); input.click();
         }, !caps || !caps.write || active || !!state.listing || !!state.listError, bar);
-        button('📁+ New Folder', 'Create directory', function () {
-            var name = prompt('Folder name:');
-            if (name && !/[\/\0]/.test(name) && name !== '.' && name !== '..') p.mutate(node, 'createDir', {path: (state.path === '/' ? '' : state.path) + '/' + name});
+        button('New folder', 'Create directory', function () {
+            p.dialog(node, 'createDir', {path: state.path});
         }, !caps || !caps.write || active || !!state.listing || !!state.listError, bar);
         element('span', state.listing ? 'Loading...' : state.status || (state.loaded ? state.items.length + ' items' : 'Checking access...'), bar, 'omniosfiles-status');
         var breadcrumb = element('div', undefined, panel, 'omniosfiles-breadcrumb');
-        element('span', '📂 ', breadcrumb); link('/var/nr', '/', breadcrumb);
+        breadcrumb.appendChild(p.icon('folder')); link('/var/nr', '/', breadcrumb);
         var prefix = '';
         state.path.split('/').filter(function (part) { return !!part; }).forEach(function (part) {
             prefix += '/' + part; element('span', ' / ', breadcrumb); link(part, prefix, breadcrumb);
         });
-        if (state.listError) element('div', state.listError, panel).className = 'omniosfiles-error';
+        if (state.listError || state.operationError) element('div', state.listError || state.operationError, panel).className = 'omniosfiles-error';
         var list = element('div', undefined, panel, 'omniosfiles-list');
         var table = element('table', undefined, list, 'omniosfiles-table');
         var header = element('tr', undefined, element('thead', undefined, table));
@@ -145,21 +165,20 @@ module.exports.omniosfiles = function (parent) {
         else {
             if (state.path !== '/') {
                 var parentCell = element('td', undefined, element('tr', undefined, body)); parentCell.colSpan = 4;
-                button('📁 ..', 'Parent directory', function () { p.navigate(node, state.path.replace(/\/[^/]+\/?$/, '') || '/'); }, false, parentCell, 'omniosfiles-directory');
+                button('..', 'Parent directory', function () { p.navigate(node, state.path.replace(/\/[^/]+\/?$/, '') || '/'); }, false, parentCell, 'omniosfiles-directory');
             }
             state.items.forEach(function (item) {
                 var row = element('tr', undefined, body), cell = element('td', undefined, row); cell.className = 'omniosfiles-name';
-                if (item.isDirectory && item.supported) button('📁 ' + item.name, 'Open directory', function () { p.navigate(node, item.path); }, false, cell, 'omniosfiles-directory');
-                else element('span', (item.isLink ? '🔗 ' : '📄 ') + item.name + (item.isLink ? ' (symlink)' : !item.supported ? ' (unsupported)' : ''), cell);
+                if (item.isDirectory && item.supported) button(item.name, 'Open directory', function () { p.navigate(node, item.path); }, false, cell, 'omniosfiles-directory');
+                else { cell.appendChild(p.icon('file')); element('span', item.name + (item.isLink ? ' (symlink)' : !item.supported ? ' (unsupported)' : ''), cell); }
                 element('td', item.isDirectory ? '' : p.formatSize(item.size), row).style.textAlign = 'right';
                 element('td', new Date(item.mtime).toLocaleString(), row);
                 var ops = element('td', undefined, row); ops.style.textAlign = 'center'; ops.style.whiteSpace = 'nowrap';
-                if (!item.isDirectory) button('⬇️', 'Download', function () { p.download(node, item); }, active || !item.supported, ops, 'omniosfiles-action-btn');
-                button('✏️', 'Rename', function () {
-                    var name = prompt('New name:', item.name);
-                    if (name && !/[\/\0]/.test(name) && name !== '.' && name !== '..') p.mutate(node, 'rename', {srcPath: item.path, dstPath: item.path.replace(/[^/]+$/, '') + name});
+                if (!item.isDirectory) button('', 'Download', function () { p.download(node, item); }, active || !item.supported, ops, 'omniosfiles-action-btn');
+                button('', 'Rename', function () {
+                    p.dialog(node, 'rename', item);
                 }, !caps.write || active || !item.supported, ops, 'omniosfiles-action-btn');
-                button('🗑️', 'Delete', function () { if (confirm('Delete ' + item.name + (item.isDirectory ? ' and its contents?' : '?'))) p.mutate(node, 'delete', {path: item.path}); }, !caps.write || active || !item.supported, ops, 'omniosfiles-action-btn danger');
+                button('', 'Delete', function () { p.dialog(node, 'delete', item); }, !caps.write || active || !item.supported, ops, 'omniosfiles-action-btn danger');
             });
             if (!state.items.length) placeholder('Directory is empty');
         }
@@ -168,16 +187,80 @@ module.exports.omniosfiles = function (parent) {
             var percent = t.total ? Math.min(100, Math.round(t.offset * 100 / t.total)) : 0;
             var progress = element('div', undefined, panel); progress.className = 'omniosfiles-progress';
             var label = element('div', undefined, progress); label.className = 'omniosfiles-progress-label';
-            element('span', (t.upload ? 'Uploading: ' : 'Downloading: ') + t.name + (t.cancelling ? ' (cancelling)' : ''), label).style.flexGrow = '1';
+            element('span', (t.upload ? 'Uploading: ' : 'Downloading: ') + t.name + (t.cancelling ? ' (cancelling)' : t.offset === t.total ? ' (verifying)' : ''), label).style.flexGrow = '1';
             element('span', p.formatSize(t.offset) + ' / ' + p.formatSize(t.total) + ' · ' + percent + '%', label);
             button('Cancel', 'Cancel transfer', function () { p.cancel(id); }, t.cancelling, label, 'omniosfiles-action-btn danger');
             var track = element('div', undefined, progress); track.className = 'omniosfiles-progress-track';
             var fill = element('div', undefined, track); fill.className = 'omniosfiles-progress-fill'; fill.style.width = percent + '%';
         });
     };
+    obj.icon = function (name) {
+        // Original outline drawings, no external icon font or CDN dependency.
+        var paths = {
+            folder: 'M3 6h7l2 2h9v12H3z M3 6V4h7l2 2h7v2',
+            file: 'M5 3h9l5 5v13H5z M14 3v6h5 M8 13h8 M8 17h6',
+            refresh: 'M20 10a8 8 0 1 0-1 8 M20 4v6h-6',
+            upload: 'M12 16V3 M7 8l5-5 5 5 M4 15v6h16v-6',
+            download: 'M12 3v13 M7 11l5 5 5-5 M4 17v4h16v-4',
+            edit: 'M4 16L16 4l4 4L8 20H4z M13 7l4 4',
+            trash: 'M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M10 10v7 M14 10v7'
+        };
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'of-icon');
+        svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', paths[name] || paths.file); path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '1.6');
+        path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(path); return svg;
+    };
+    obj.dialog = function (node, action, item) {
+        var p = pluginHandler.omniosfiles, state = p.nodes[node];
+        if (!state || !state.caps || !state.caps.write || state.mutating) return;
+        if (p.openDialog) p.openDialog.close();
+        var previous = document.activeElement, originPath = state.path;
+        var dialog = document.createElement('dialog'); dialog.className = 'of-dialog';
+        function add(tag, text, parent) { var el = document.createElement(tag); if (text !== undefined) el.textContent = text; (parent || dialog).appendChild(el); return el; }
+        var title = action === 'createDir' ? 'New folder' : action === 'rename' ? 'Rename' : 'Delete';
+        add('h3', title).id = 'of-dialog-title'; dialog.setAttribute('aria-labelledby', 'of-dialog-title');
+        var form = add('form'), input;
+        if (action === 'delete') add('p', 'Delete ' + item.name + (item.isDirectory ? ' and all its contents?' : '?'), form);
+        else {
+            var label = add('label', action === 'createDir' ? 'Folder name' : 'New name', form); label.htmlFor = 'of-dialog-name';
+            input = add('input', undefined, form); input.id = 'of-dialog-name'; input.value = action === 'rename' ? item.name : ''; input.required = true;
+            input.autocomplete = 'off';
+        }
+        var error = add('p', '', form); error.className = 'of-dialog-error'; error.setAttribute('role', 'alert');
+        var actions = add('div', undefined, form); actions.className = 'of-dialog-actions';
+        var cancel = add('button', 'Cancel', actions); cancel.type = 'button';
+        var submit = add('button', title === 'Rename' ? 'Save' : title === 'New folder' ? 'Create' : 'Delete', actions); submit.type = 'submit';
+        var closed = false;
+        function close() {
+            if (closed) return; closed = true;
+            dialog.close(); dialog.remove();
+            if (p.openDialog && p.openDialog.close === close) p.openDialog = null;
+            if (previous && previous.isConnected) previous.focus();
+        }
+        cancel.addEventListener('click', close);
+        dialog.addEventListener('cancel', function (event) { event.preventDefault(); close(); });
+        form.addEventListener('submit', function (event) {
+            event.preventDefault(); if (closed || submit.disabled) return;
+            if (!currentNode || currentNode._id !== node || state.path !== originPath || !state.caps || !state.caps.write || state.mutating || state.listing || Object.keys(p.transfers).some(function (id) { return p.transfers[id].node === node; })) { close(); return; }
+            var name = input && input.value;
+            if (input && (!name || /[\/\0]/.test(name) || name === '.' || name === '..' || name.indexOf('.omniosfiles-') === 0)) {
+                error.textContent = 'Enter a valid name without slashes, NUL, or the reserved .omniosfiles- prefix.'; input.focus(); return;
+            }
+            var args = action === 'delete' ? {path: item.path} : action === 'rename' ? {srcPath: item.path, dstPath: item.path.replace(/[^/]+$/, '') + name} : {path: (item.path === '/' ? '' : item.path) + '/' + name};
+            submit.disabled = true; close(); p.mutate(node, action, args);
+        });
+        document.body.appendChild(dialog); p.openDialog = {node: node, close: close};
+        dialog.showModal(); (input || cancel).focus(); if (input) input.select();
+    };
     obj.mutate = function (node, action, args) {
         var p = pluginHandler.omniosfiles;
-        p.request(node, action, args, function (data, error) { p.status(node, error || 'Operation completed'); if (!error) p.navigate(node, p.nodes[node].path); });
+        if (p.nodes[node].mutating) return;
+        p.nodes[node].mutating = true; p.nodes[node].operationError = null; p.render(node);
+        p.request(node, action, args, function (data, error) { p.nodes[node].mutating = false; p.nodes[node].operationError = error || null; p.status(node, error || 'Operation completed'); if (!error) p.navigate(node, p.nodes[node].path); });
     };
     obj.upload = function (node, path, file) {
         var p = pluginHandler.omniosfiles, caps = p.nodes[node].caps;
