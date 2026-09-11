@@ -3,6 +3,7 @@ module.exports.omniosfiles = function (parent) {
     var obj = {};
     var service = require('./server').create(parent, require('./server').settings(require('./config.json').settings));
     obj.serveraction = service.serveraction;
+    obj.server_startup = service.server_startup;
     obj.exports = ['onDeviceRefreshEnd', 'result', 'request', 'render', 'navigate', 'mutate', 'upload', 'download', 'uploadNext', 'downloadNext', 'finish', 'cancel', 'status', 'hash'];
     obj.onDeviceRefreshEnd = function () {
         if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) return;

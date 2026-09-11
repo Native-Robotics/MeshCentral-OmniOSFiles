@@ -16,11 +16,16 @@ exports.settings = function (raw) {
 };
 exports.create = function (parent, settings) {
     const web = parent.parent.webserver, jobs = new Map(), transfers = new Map();
-    const api = ['registerPermissions', 'checkPluginPermission', 'getPluginPermissions'].every(k => typeof parent[k] === 'function');
-    if (api) parent.registerPermissions('omniosfiles', {
-        read: {title: 'Read OmniOS files', desc: 'List and download under /var/nr', default: 'denied'},
-        write: {title: 'Modify OmniOS files', desc: 'Upload, create, rename and delete under /var/nr', default: 'denied'}
-    });
+    let api = false;
+    function initialize() {
+        api = ['registerPermissions', 'checkPluginPermission', 'getPluginPermissions'].every(k => typeof parent[k] === 'function');
+        if (api) parent.registerPermissions('omniosfiles', {
+            read: {title: 'Read OmniOS files', desc: 'List and download under /var/nr', default: 'denied'},
+            write: {title: 'Modify OmniOS files', desc: 'Upload, create, rename and delete under /var/nr', default: 'denied'}
+        });
+    }
+    // The manual-list loader constructs plugins before defining the permissions API.
+    initialize();
     const id = () => crypto.randomBytes(24).toString('hex');
     const live = c => web.wssessions2[c.ws.sessionId] === c.ws;
     function access(c, write, cb) {
@@ -117,7 +122,8 @@ exports.create = function (parent, settings) {
             });
         }
     }
-    return {serveraction(cmd, source) {
+    return {server_startup: initialize, serveraction(cmd, source) {
+        if (!api) initialize();
         if (!cmd || !source) return;
         if (source.dbNodeKey) return agentMessage(cmd, source);
         if (!source.user || !source.domain || !source.ws) return;
