@@ -349,13 +349,17 @@ def main():
         os.umask(0o077)
         worker = Worker('/var/nr')
         buffer = b''
+        last_activity = time.monotonic()
         while True:
             worker.expire()
+            if not worker.transfers and time.monotonic() - last_activity > 120:
+                break
             if not select.select([sys.stdin], [], [], 1)[0]:
                 continue
             block = os.read(sys.stdin.fileno(), 65536)
             if not block:
                 break
+            last_activity = time.monotonic()
             buffer += block
             if len(buffer) > 200000:
                 raise ValueError('Input frame limit exceeded')
