@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.1]
+
+### Changed
+
+- Require explicit read/write plugin grants and device access independently of standard `No Files` restrictions.
+- Replace the 1.x wire protocol with one-time reverse authorization and correlated requests scoped to device, agent and browser session.
+- Execute file operations in a bundled Python worker as user:user with descriptor-relative, no-follow paths and exclusive atomic upload publication.
+- Validate sequential chunks, exact sizes and incremental SHA-256 in both directions; handle empty files, cancellation, timeouts and conflicting paths.
+- Replace filename interpolation in inline JavaScript with DOM text and event handlers; bind asynchronous transfers to their original device.
+- Stream downloads when the browser provides a file writer and cap all transfers at 100 MiB pending device/browser qualification.
+- Fix the root and worker account; reject invalid settings and make checksum verification mandatory.
+
+### Compatibility
+
+- Update the server plugin, agent core and browser together. Requires the local MeshCentral fork's plugin permission APIs and Linux/Python worker prerequisites.
+- This release candidate has local automated coverage; deployed MeshAgent/browser qualification remains open in PLAN.md. Existing files are never overwritten. Orphan recovery after hard termination is manual.
+
 ## [1.0.0] - 2026-01-30
 
 ### Added
