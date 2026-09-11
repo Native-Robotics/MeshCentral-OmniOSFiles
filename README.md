@@ -13,7 +13,7 @@ Create, rename and delete use modal dialogs with keyboard focus, Enter to
 submit and Escape to cancel. Pending mutations disable further changes;
 errors and final transfer verification remain visible.
 
-For an upgrade **from rc.3/rc.4 to rc.5**, reload the installed server plugin and
+For an upgrade **from rc.3–rc.5 to rc.6**, reload the installed server plugin and
 fully reload the browser page. Agent modules are unchanged; this UI update
 alone does not require rebuilding or distributing the agent core.
 
@@ -140,3 +140,13 @@ git diff --check
 Tests use Node.js 18+ and an isolated Linux filesystem. Set `MESHCENTRAL_SOURCE` to the actual core checkout for the permission integration test; without an available checkout that one test is explicitly skipped. The round-trip test runs the actual Python worker transport with a temporary root/current UID, adapting MeshAgent subprocess argv semantics to Node.js. It does not execute as the deployed `user` or certify the deployed MeshAgent binary. An additional native smoke test runs the Linux x86-64 MeshAgent binary from the selected checkout, with only network transport and the test root/UID substituted. This exercises actual module loading, secure randomness, subprocess argv/streams, timers and worker JSON. Set `MESHAGENT_BINARY` to another compatible local binary if needed; the native test is explicitly skipped when unavailable.
 
 Before production use, complete the remaining checkboxes in [PLAN.md](PLAN.md): real permission UI and `No Files`, native randomness/process APIs, execution as user:user, supported browsers, disconnect/core replacement and resource cleanup. Large-file support beyond 100 MiB is a separate qualification gate. Resume after restart and drag-and-drop are outside this release candidate.
+
+### Browser UI regression checks
+
+`node --test tests/browser-ui.test.js` runs the actual serialized frontend in
+headless Chromium through its local debugging interface. It checks keyboard
+navigation, submission/cancellation, focus return, disabled controls, text
+contrast and narrow layouts with long paths. It requires a Node runtime with
+global `WebSocket` and Chrome at `/usr/bin/google-chrome`, or `CHROME_BINARY`.
+The test skips explicitly when these requirements are absent. It uses only
+a temporary local page and profile, without connecting to a deployed server.
