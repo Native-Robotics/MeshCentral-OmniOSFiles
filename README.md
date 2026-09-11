@@ -4,6 +4,26 @@ A file manager restricted to `/var/nr` on Linux OmniOS PCs. It provides director
 
 The 2.0 protocol replaces the 1.x implementation. **This is a release candidate for device qualification**, not a claim that the deployed MeshAgent has been tested. See [PLAN.md](PLAN.md) for completed tasks and [the deployment checklist](docs/DEPLOYMENT-CHECKLIST.md) for real-device checks.
 
+## File browser interface
+
+The interface adapts selected SVAR Willow styling to MeshCentral's light and
+night themes. Table actions use local SVG drawings; no Svelte runtime, icon
+font, or CDN resource is loaded. See [third-party notices](THIRD_PARTY_NOTICES.md).
+Create, rename and delete use modal dialogs with keyboard focus, Enter to
+submit and Escape to cancel. Pending mutations disable further changes;
+errors and final transfer verification remain visible.
+
+For an upgrade **from rc.3 to rc.4**, reload the installed server plugin and
+fully reload the browser page. Agent modules are unchanged; this UI update
+alone does not require rebuilding or distributing the agent core.
+
+After deployment, verify light/night themes, narrow layouts and long names;
+create/rename/delete with Enter and Escape; upload/download and cancellation;
+read-only plugin access with standard `No Files`; and switching devices/tabs
+during requests. Check the browser console for CSP errors and confirm that
+other MeshCentral tabs keep their styling. Local rendering and automated tests
+do not replace these checks on the deployed server.
+
 ## Access
 
 This plugin requires the **local MeshCentral fork's plugin permission API** (`registerPermissions`, `checkPluginPermission`, `getPluginPermissions`). The manifest's minimum version alone does not guarantee these APIs exist in another MeshCentral build. Missing APIs deny operations.
