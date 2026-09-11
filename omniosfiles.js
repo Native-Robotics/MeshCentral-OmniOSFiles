@@ -127,7 +127,7 @@ module.exports.omniosfiles = function (parent) {
             ".of-dialog p{overflow-wrap:anywhere;white-space:pre-wrap}" +
             ".of-dialog input{box-sizing:border-box;width:100%;margin:8px 0 16px;padding:8px;background:inherit;color:inherit;border:1px solid #888;border-radius:4px}" +
             ".of-dialog .of-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}" +
-            ".of-dialog button{padding:7px 14px;cursor:pointer;border:1px solid #aaa;border-radius:4px;background:inherit;color:inherit}.of-dialog button:hover{background:#80808026}.of-dialog button:focus-visible{outline:2px solid #6aa5df;outline-offset:2px}" +
+            ".of-dialog button{padding:7px 14px;cursor:pointer;border:1px solid #aaa;border-radius:4px;background:inherit;color:inherit}.of-dialog button:hover{background:#80808026}.of-dialog button:focus-visible,.of-dialog input:focus-visible{outline:2px solid #235a8e;outline-offset:2px}.night .of-dialog button:focus-visible,.night .of-dialog input:focus-visible{outline-color:#9bc8f5}" +
             ".of-dialog .of-dialog-error{color:#b3342c}" +
             ".night .of-dialog .of-dialog-error{color:#ffaaa5}", host);
         var panel = element('div', undefined, host, 'omniosfiles-container');
