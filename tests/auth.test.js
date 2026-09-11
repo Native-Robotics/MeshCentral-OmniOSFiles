@@ -85,13 +85,14 @@ test('changed proposal payload cannot be approved by the server', () => {
     h.guard({...original,payload:JSON.stringify({protocol:2,action:'delete'})});
     assert.equal(h.wire.length,1);assert.equal(h.executed.length,0);
     // Expire the unapproved agent proposal, then complete the real proposal.
-    for(const fn of [...h.timers])fn();h.guard(original);h.guard(h.wire[1]);
+    for(const fn of [...h.timers])fn();assert.match(h.sent.at(-1).error,/authorization/);
+    h.request({requestId:'retry'});h.guard(h.wire[1]);h.guard(h.wire[2]);
     assert.equal(h.executed[0].action,'listDir');
 });
 
 test('timeouts remove jobs and late replies or old timers cannot finish newer requests', () => {
     const h=setup({hold:true,fakeClock:true});h.request();const first=h.wire[0],timer=[...h.jobTimers][0];
-    timer.fn();assert.match(h.sent[0].error,/timed out/);
+    timer.fn();assert.match(h.sent[0].error,/agent module did not respond/);assert.equal(h.sent[0].stage,'awaitingAgent');
     h.request({requestId:'new'});timer.fn();assert.equal(h.sent.length,1);
     h.guard(first);assert.equal(h.wire.length,2);
     h.guard(h.wire[1]);h.guard(h.wire[2]);assert.equal(h.sent[1].requestId,'new');assert.equal(h.executed.length,1);
@@ -103,4 +104,18 @@ test('another authenticated session cannot continue the original session transfe
     h.web.wssessions2.other=ws;h.web.users[user._id]=user;
     h.service.serveraction({pluginaction:'cancel',nodeid:'node//n',requestId:'client'}, {ws,user,domain:{id:''}});
     assert.equal(messages[0].error,'Unknown transfer');assert.equal(h.executed.length,1);
+});
+
+test('agent initialization failures return immediately without granting file execution', () => {
+    const h=setup({hold:true,fakeClock:true});h.request();const requestId=h.wire[0].requestId;
+    h.service.serveraction({pluginaction:'agentError',requestId,error:'Secure random generator failed'},h.agent);
+    assert.match(h.sent[0].error,/Secure random generator/);assert.equal(h.jobTimers.size,0);assert.equal(h.executed.length,0);
+});
+test('timeouts distinguish module receipt from worker execution', () => {
+    for(const stage of ['received','executing']) {
+        const h=setup({hold:true,fakeClock:true});h.request();
+        h.service.serveraction({pluginaction:'agentStatus',requestId:h.wire[0].requestId,stage},h.agent);
+        [...h.jobTimers][0].fn();assert.equal(h.sent[0].stage,stage);
+        assert.match(h.sent[0].error,stage==='received'?/authorization/:/worker/);
+    }
 });

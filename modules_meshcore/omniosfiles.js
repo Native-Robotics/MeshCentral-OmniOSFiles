@@ -41,7 +41,21 @@ function execute(payload, reply) {
         worker.stdin.write(JSON.stringify({id: id, payload: payload}) + '\n');
     } catch (e) { stop('Cannot run file worker: ' + e.message); if (!pending[String(sequence)]) reply({type: 'error', error: 'Cannot run file worker: ' + e.message}); }
 }
-var guard = require('omniosfiles-auth').create(function (command) { mesh.SendCommand(command); }, execute);
-// Reconnection invalidates transfers. Python also expires idle handles independently.
-mesh.on('Connected', function (state) { if (!state) stop('Agent disconnected'); });
-module.exports = {consoleaction: function (args) { guard(args); }};
+var guard = null;
+var connectionHookInstalled = false;
+module.exports = {consoleaction: function (args) {
+    if (!args || typeof args.requestId !== 'string' || !/^[a-f0-9]{48}$/.test(args.requestId)) return;
+    // Keep the entry module loadable even if a supporting module is missing/stale.
+    // Report startup failures through the authenticated agent channel, not a tunnel.
+    try {
+        if (args.pluginaction === 'propose') mesh.SendCommand({action: 'plugin', plugin: 'omniosfiles', pluginaction: 'agentStatus', requestId: args.requestId, stage: 'received'});
+        if (!guard) guard = require('omniosfiles-auth').create(function (command) { mesh.SendCommand(command); }, execute);
+        if (!connectionHookInstalled) {
+            mesh.on('Connected', function (state) { if (!state) stop('Agent disconnected'); });
+            connectionHookInstalled = true;
+        }
+        guard(args);
+    } catch (e) {
+        mesh.SendCommand({action: 'plugin', plugin: 'omniosfiles', pluginaction: 'agentError', requestId: args.requestId, error: String(e.message || e).slice(0, 4096)});
+    }
+}};
