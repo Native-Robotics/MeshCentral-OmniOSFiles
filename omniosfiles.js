@@ -264,6 +264,7 @@ module.exports.omniosfiles = function (parent) {
     };
     obj.upload = function (node, path, file) {
         var p = pluginHandler.omniosfiles, caps = p.nodes[node].caps;
+        p.nodes[node].status = ''; p.nodes[node].operationError = null;
         if (!caps || !caps.write || file.size > caps.maxFileSize) { p.status(node, 'Access denied or file exceeds the qualified size limit'); return; }
         var id = 'u' + Date.now() + '-' + (++p.sequence);
         var t = {id: id, node: node, name: file.name, file: file, upload: true, total: file.size, offset: 0, index: 0, hash: p.hash(), path: path};
@@ -300,6 +301,7 @@ module.exports.omniosfiles = function (parent) {
     };
     obj.download = function (node, item) {
         var p = pluginHandler.omniosfiles, caps = p.nodes[node].caps;
+        p.nodes[node].status = ''; p.nodes[node].operationError = null;
         if (!caps || item.size > caps.maxFileSize) { p.status(node, 'File exceeds the qualified size limit'); return; }
         var t = {id: 'd' + Date.now() + '-' + (++p.sequence), node: node, name: item.name, upload: false, total: item.size, offset: 0, index: 0, hash: p.hash(), chunks: []};
         p.transfers[t.id] = t;
