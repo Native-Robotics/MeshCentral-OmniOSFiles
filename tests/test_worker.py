@@ -172,6 +172,19 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse((self.root / 'new').exists())
         self.assertEqual(self.w.transfers, {})
 
+    def test_directory_sync_error_reports_committed_file(self):
+        self.call('startUpload', KEY, path='/new', totalSize=0)
+        sync = os.fsync
+        def fail_directory(fd):
+            if fd == self.w.transfers[KEY]['parent']:
+                raise OSError('directory sync failed')
+            return sync(fd)
+        with mock.patch.object(module.os, 'fsync', side_effect=fail_directory):
+            with self.assertRaisesRegex(RuntimeError, 'File was published'):
+                self.call('finishUpload', KEY, checksum=hashlib.sha256(b'').hexdigest())
+        self.assertTrue((self.root / 'new').is_file())
+        self.assertEqual(self.w.transfers, {})
+
     def test_only_one_worker_and_no_leaked_fds(self):
         before = len(os.listdir('/proc/self/fd'))
         with self.assertRaises(BlockingIOError):

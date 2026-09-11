@@ -4,7 +4,12 @@ const assert = require('node:assert/strict');
 const fs = require('fs'), vm = require('vm');
 const server = require('../server');
 function setup(options = {}) {
-    const sent = [], wire = [], executed = [], timers = new Set();
+    const sent = [], wire = [], executed = [], timers = new Set(), jobTimers = new Set();
+    let implementation = server;
+    if (options.fakeClock) {
+        const env = {exports: {}, require, setTimeout(fn, ms) { const timer = {fn, ms, unref() {}}; jobTimers.add(timer); return timer; }, clearTimeout(timer) { jobTimers.delete(timer); }};
+        vm.runInNewContext(fs.readFileSync(require.resolve('../server'), 'utf8'), env); implementation = env.exports;
+    }
     let read = true, write = true, visible = true;
     const ws = {sessionId: 'own', send: s => sent.push(JSON.parse(s))};
     const user = {_id: 'user//u'}, source = {ws, user, domain: {id: ''}};
@@ -17,9 +22,9 @@ function setup(options = {}) {
     const agent = {dbNodeKey: 'node//n', send(s) { const m = JSON.parse(s); wire.push(m); if (!options.hold) guard(m); }};
     const guard = context.exports.create(m => service.serveraction(m, agent), (p, reply) => { executed.push(p); reply({type: 'listDirResult', items: []}); }, () => 'b'.repeat(64));
     web.wsagents[agent.dbNodeKey] = agent;
-    service = server.create(parent, server.settings({}));
+    service = implementation.create(parent, server.settings({}));
     function request(extra = {}) { service.serveraction(Object.assign({pluginaction: 'listDir', nodeid: agent.dbNodeKey, requestId: 'client', path: '/'}, extra), source); }
-    return {sent, wire, executed, request, service, agent, source, web, parent, guard, timers, rights(r, w, v = true) {read = r; write = w; visible = v;}};
+    return {sent, wire, executed, request, service, agent, source, web, parent, guard, timers, jobTimers, rights(r, w, v = true) {read = r; write = w; visible = v;}};
 }
 test('No Files does not block separately authorized reads; sessions and IDs are server-owned', () => {
     const h = setup(); h.request({sessionid: 'victim'});
@@ -82,4 +87,20 @@ test('changed proposal payload cannot be approved by the server', () => {
     // Expire the unapproved agent proposal, then complete the real proposal.
     for(const fn of [...h.timers])fn();h.guard(original);h.guard(h.wire[1]);
     assert.equal(h.executed[0].action,'listDir');
+});
+
+test('timeouts remove jobs and late replies or old timers cannot finish newer requests', () => {
+    const h=setup({hold:true,fakeClock:true});h.request();const first=h.wire[0],timer=[...h.jobTimers][0];
+    timer.fn();assert.match(h.sent[0].error,/timed out/);
+    h.request({requestId:'new'});timer.fn();assert.equal(h.sent.length,1);
+    h.guard(first);assert.equal(h.wire.length,2);
+    h.guard(h.wire[1]);h.guard(h.wire[2]);assert.equal(h.sent[1].requestId,'new');assert.equal(h.executed.length,1);
+    for(const fn of [...h.timers])fn();
+});
+test('another authenticated session cannot continue the original session transfer', () => {
+    const h=setup();h.request({pluginaction:'startDownload'});
+    const messages=[],ws={sessionId:'other',send:s=>messages.push(JSON.parse(s))},user={_id:'user//other'};
+    h.web.wssessions2.other=ws;h.web.users[user._id]=user;
+    h.service.serveraction({pluginaction:'cancel',nodeid:'node//n',requestId:'client'}, {ws,user,domain:{id:''}});
+    assert.equal(messages[0].error,'Unknown transfer');assert.equal(h.executed.length,1);
 });
