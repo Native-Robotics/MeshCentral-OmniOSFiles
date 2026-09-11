@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.2]
+
+### Fixed
+
+- Restore the compact toolbar, breadcrumbs, table headers, readable sizes, action icons and progress bar while keeping filenames in DOM text and event handlers.
+- Distinguish failed/loading/unloaded directories from successful empty listings; clear a previous listing error after refresh.
+- Report agent startup and randomness failures explicitly and identify the stage of a timed-out request.
+- Keep the agent entry module loadable when a supporting module is unavailable so it can report the initialization error.
+- Add a native MeshAgent regression test and clarify the complete `uploadagentcore` browser command.
+
 ## [2.0.0-rc.1]
 
 ### Changed

@@ -1,6 +1,6 @@
 # MeshCentral OmniOS Files
 
-A file manager restricted to `/var/nr` on Linux OmniOS PCs. It provides directory browsing, upload, download, directory creation, rename and recursive deletion through separately assigned plugin permissions.
+A file manager restricted to `/var/nr` on Linux OmniOS PCs. It provides directory browsing, upload, download, directory creation, rename and recursive deletion through separately assigned plugin permissions. The device Plugins tab contains a toolbar, breadcrumbs, directory-first file listing, compact action buttons and transfer progress.
 
 The 2.0 protocol replaces the 1.x implementation. **This is a release candidate for device qualification**, not a claim that the deployed MeshAgent has been tested. See [PLAN.md](PLAN.md) for completed tasks and [the deployment checklist](docs/DEPLOYMENT-CHECKLIST.md) for real-device checks.
 
@@ -78,6 +78,16 @@ Server, agent and browser **must be updated together** for protocol 2. Old uncor
 3. Wait for the agent core to become stable and fully reload the browser page.
 4. Verify permissions, filesystem behavior, cancellation and checksum on the test device before synchronizing more devices.
 
+For the currently selected device, the complete browser console command is:
+
+```javascript
+meshserver.send({action: 'uploadagentcore', type: 'default', nodeids: [currentNode._id]});
+```
+
+`uploadagentcore` is an action name inside this message, not a standalone JavaScript function. If the core bundle has already been rebuilt by installation/startup, `distributeCore()` can synchronize that existing bundle.
+
+A failed listing is shown as an error, not an empty directory. A successful Refresh clears the previous listing error. Request timeouts identify whether the server is waiting for the agent module, authorization, or the file worker; agent initialization/randomness errors are reported explicitly.
+
 In this MeshCentral checkout, `distributeCore()` synchronizes a bundle already held in memory; it does not rebuild edited modules. Reload alone does not refresh installed manifest metadata; use normal upgrade/startup handling for that metadata.
 
 ## Development and qualification
@@ -93,6 +103,6 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 git diff --check
 ```
 
-Tests use Node.js 18+ and an isolated Linux filesystem. Set `MESHCENTRAL_SOURCE` to the actual core checkout for the permission integration test; without an available checkout that one test is explicitly skipped. The round-trip test runs the actual Python worker transport with a temporary root/current UID, adapting MeshAgent subprocess argv semantics to Node.js. It does not execute as the deployed `user` or certify native MeshAgent APIs.
+Tests use Node.js 18+ and an isolated Linux filesystem. Set `MESHCENTRAL_SOURCE` to the actual core checkout for the permission integration test; without an available checkout that one test is explicitly skipped. The round-trip test runs the actual Python worker transport with a temporary root/current UID, adapting MeshAgent subprocess argv semantics to Node.js. It does not execute as the deployed `user` or certify the deployed MeshAgent binary. An additional native smoke test runs the Linux x86-64 MeshAgent binary from the selected checkout, with only network transport and the test root/UID substituted. This exercises actual module loading, secure randomness, subprocess argv/streams, timers and worker JSON. Set `MESHAGENT_BINARY` to another compatible local binary if needed; the native test is explicitly skipped when unavailable.
 
 Before production use, complete the remaining checkboxes in [PLAN.md](PLAN.md): real permission UI and `No Files`, native randomness/process APIs, execution as user:user, supported browsers, disconnect/core replacement and resource cleanup. Large-file support beyond 100 MiB is a separate qualification gate. Resume after restart and drag-and-drop are outside this release candidate.
