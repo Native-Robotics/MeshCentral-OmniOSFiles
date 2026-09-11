@@ -68,6 +68,15 @@ test('cancellation waits for the in-flight chunk before sending cancel', () => {
     assert.equal(p.transfers.u,undefined);assert.equal(p.nodes['node//a'].status,'Cancelled');
 });
 
+test('starting a new transfer clears a stale status left by a prior mutation', () => {
+    const {p, ctx} = browser(); const state = p.nodes['node//a'];
+    state.status = 'Operation completed'; state.operationError = 'Denied';
+    p.upload('node//a', '/', {name: 'x', size: 1});
+    assert.equal(state.status, ''); assert.equal(state.operationError, null);
+    state.status = 'Operation completed'; state.operationError = 'Denied'; ctx.window = {};
+    p.download('node//a', {name: 'x', size: 1, path: '/x'});
+    assert.equal(state.status, ''); assert.equal(state.operationError, null);
+});
 test('successful refresh clears the previous listing error', () => {
     const {p,sent}=browser(),state=p.nodes['node//a'];state.listError='Device request timed out';state.status=state.listError;
     p.navigate('node//a','/');
