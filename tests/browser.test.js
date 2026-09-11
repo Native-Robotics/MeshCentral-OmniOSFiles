@@ -10,7 +10,7 @@ function browser() {
     const source = factory({parent: {webserver: {}}});
     for (const name of source.exports) ctx.pluginHandler.omniosfiles[name] = vm.runInNewContext('(' + source[name].toString() + ')', ctx);
     const p = ctx.pluginHandler.omniosfiles;
-    Object.assign(p, {nodes: {'node//a': {caps: {write: true, maxFileSize: 104857600}, path: '/', items: []}, 'node//b': {path: '/', items: []}}, pending: {}, transfers: {}, sequence: 0});
+    Object.assign(p, {nodes: {'node//a': {caps: {write: true, maxFileSize: 104857600}, path: '/', items: [], loaded: true}, 'node//b': {path: '/', items: []}}, pending: {}, transfers: {}, sequence: 0});
     p.render = () => {};
     return {p, ctx, sent, timers};
 }
@@ -56,8 +56,8 @@ test('filenames are DOM text, never inline JavaScript', () => {
     const source=factory({parent:{webserver:{}}});p.render=vm.runInNewContext('('+source.render.toString()+')',ctx);
     const name="');window.attacked=true;//<img src=x>";
     p.nodes['node//a'].items=[{name,path:'/'+name,isDirectory:false,supported:true,size:1,mtime:0}];p.render('node//a');
-    assert.ok(nodes.some(n=>n.textContent===name));assert.ok(nodes.every(n=>n.innerHTML===undefined&&n.onclick===undefined));
-    let clicked;p.download=(node,item)=>{clicked={node,item};};nodes.find(n=>n.textContent==='Download').events.click();
+    assert.ok(nodes.some(n=>n.textContent==='📄 '+name));assert.ok(nodes.every(n=>n.innerHTML===undefined&&n.onclick===undefined));
+    let clicked;p.download=(node,item)=>{clicked={node,item};};nodes.find(n=>n.title==='Download').events.click();
     assert.equal(clicked.item.name,name);assert.equal(clicked.node,'node//a');
 });
 test('cancellation waits for the in-flight chunk before sending cancel', () => {
@@ -66,4 +66,23 @@ test('cancellation waits for the in-flight chunk before sending cancel', () => {
     delete p.pending.u;p.cancel('u');assert.equal(sent[0].pluginaction,'cancel');
     p.result({}, {protocol:2,nodeid:'node//a',requestId:'u',data:{type:'cancelled'}});
     assert.equal(p.transfers.u,undefined);assert.equal(p.nodes['node//a'].status,'Cancelled');
+});
+
+test('successful refresh clears the previous listing error', () => {
+    const {p,sent}=browser(),state=p.nodes['node//a'];state.listError='Device request timed out';state.status=state.listError;
+    p.navigate('node//a','/');
+    p.result({}, {protocol:2,nodeid:'node//a',requestId:sent[0].requestId,data:{path:'/',items:[]}});
+    assert.equal(state.status,'');assert.equal(state.listError,null);assert.equal(state.loaded,true);
+});
+test('directory error, initial state and successful empty listing are distinct', () => {
+    const {p,ctx}=browser();const nodes=[];
+    function el(tag){const e={tag,children:[],events:{},style:{},appendChild(x){this.children.push(x);},addEventListener(k,f){this.events[k]=f;}};nodes.push(e);return e;}
+    const host=el('div');ctx.document={getElementById(){return host;},createElement:el};
+    p.render=vm.runInNewContext('('+factory({parent:{webserver:{}}}).render.toString()+')',ctx);
+    const state=p.nodes['node//a'];state.loaded=false;state.listError='No agent response';p.render('node//a');
+    assert.ok(nodes.some(n=>n.textContent==='Directory could not be loaded. Use Refresh to try again.'));
+    assert.ok(!nodes.some(n=>n.textContent==='Directory is empty'));
+    nodes.length=0;state.listError=null;state.listing={};p.render('node//a');assert.ok(nodes.some(n=>n.textContent==='Loading directory...'));
+    nodes.length=0;state.listing=null;state.loaded=true;p.render('node//a');assert.ok(nodes.some(n=>n.textContent==='Directory is empty'));
+    assert.deepEqual(nodes.filter(n=>n.tag==='th').map(n=>n.textContent),['Name','Size','Modified','Actions']);
 });
