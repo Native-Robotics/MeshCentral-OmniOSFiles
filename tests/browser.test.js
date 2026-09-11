@@ -52,11 +52,11 @@ test('filenames are DOM text, never inline JavaScript', () => {
     const {p,ctx}=browser();
     const nodes=[];
     function element(tag){const e={tag,children:[],events:{},appendChild(x){this.children.push(x);},addEventListener(k,fn){this.events[k]=fn;},style:{}};nodes.push(e);return e;}
-    const host=element('div');ctx.document={getElementById(){return host;},createElement:element};
+    const host=element('div');ctx.document={getElementById(){return host;},createElement:element,createElementNS(ns,tag){const e=element(tag);e.setAttribute=function(k,v){this[k]=v;};return e;}};
     const source=factory({parent:{webserver:{}}});p.render=vm.runInNewContext('('+source.render.toString()+')',ctx);
     const name="');window.attacked=true;//<img src=x>";
     p.nodes['node//a'].items=[{name,path:'/'+name,isDirectory:false,supported:true,size:1,mtime:0}];p.render('node//a');
-    assert.ok(nodes.some(n=>n.textContent==='📄 '+name));assert.ok(nodes.every(n=>n.innerHTML===undefined&&n.onclick===undefined));
+    assert.ok(nodes.some(n=>n.textContent===name));assert.ok(nodes.every(n=>n.innerHTML===undefined&&n.onclick===undefined));
     let clicked;p.download=(node,item)=>{clicked={node,item};};nodes.find(n=>n.title==='Download').events.click();
     assert.equal(clicked.item.name,name);assert.equal(clicked.node,'node//a');
 });
@@ -77,7 +77,7 @@ test('successful refresh clears the previous listing error', () => {
 test('directory error, initial state and successful empty listing are distinct', () => {
     const {p,ctx}=browser();const nodes=[];
     function el(tag){const e={tag,children:[],events:{},style:{},appendChild(x){this.children.push(x);},addEventListener(k,f){this.events[k]=f;}};nodes.push(e);return e;}
-    const host=el('div');ctx.document={getElementById(){return host;},createElement:el};
+    const host=el('div');ctx.document={getElementById(){return host;},createElement:el,createElementNS(ns,tag){const e=el(tag);e.setAttribute=function(k,v){this[k]=v;};return e;}};
     p.render=vm.runInNewContext('('+factory({parent:{webserver:{}}}).render.toString()+')',ctx);
     const state=p.nodes['node//a'];state.loaded=false;state.listError='No agent response';p.render('node//a');
     assert.ok(nodes.some(n=>n.textContent==='Directory could not be loaded. Use Refresh to try again.'));
@@ -85,4 +85,41 @@ test('directory error, initial state and successful empty listing are distinct',
     nodes.length=0;state.listError=null;state.listing={};p.render('node//a');assert.ok(nodes.some(n=>n.textContent==='Loading directory...'));
     nodes.length=0;state.listing=null;state.loaded=true;p.render('node//a');assert.ok(nodes.some(n=>n.textContent==='Directory is empty'));
     assert.deepEqual(nodes.filter(n=>n.tag==='th').map(n=>n.textContent),['Name','Size','Modified','Actions']);
+});
+
+function dialogBrowser() {
+    const env=browser(), nodes=[];
+    function el(tag) {
+        const e={tag,children:[],events:{},isConnected:true,appendChild(x){this.children.push(x);},setAttribute(k,v){this[k]=v;},addEventListener(k,f){this.events[k]=f;},focus(){this.focused=true;},select(){},showModal(){this.open=true;},close(){this.open=false;},remove(){this.isConnected=false;}};
+        nodes.push(e);return e;
+    }
+    env.ctx.document={createElement:el,body:el('body'),activeElement:el('button')};
+    return {...env,nodes};
+}
+test('dialog validates names and submits once to the captured path',()=>{
+    const {p,nodes,sent}=dialogBrowser();
+    p.dialog('node//a','createDir',{path:'/'});
+    const form=nodes.find(n=>n.tag==='form'),input=nodes.find(n=>n.tag==='input');
+    input.value='../bad';form.events.submit({preventDefault(){}});assert.equal(sent.length,0);
+    input.value='папка';form.events.submit({preventDefault(){}});form.events.submit({preventDefault(){}});
+    assert.equal(sent.length,1);assert.equal(sent[0].path,'/папка');assert.equal(p.openDialog,null);
+    assert.equal(p.nodes['node//a'].mutating,true);
+    p.result({}, {protocol:2,nodeid:'node//a',requestId:sent[0].requestId,error:'Denied'});
+    assert.equal(p.nodes['node//a'].mutating,false);assert.equal(p.nodes['node//a'].status,'Denied');
+});
+test('dialog cannot mutate after a device change or loss of write access',()=>{
+    for(const mode of ['node','rights','path']) {
+        const {p,ctx,nodes,sent}=dialogBrowser();p.dialog('node//a','delete',{path:'/x',name:'x'});
+        if(mode==='node')ctx.currentNode={_id:'node//b'};
+        if(mode==='rights')p.nodes['node//a'].caps.write=false;
+        if(mode==='path')p.nodes['node//a'].path='/elsewhere';
+        nodes.find(n=>n.tag==='form').events.submit({preventDefault(){}});
+        assert.equal(sent.length,0);assert.equal(p.openDialog,null);
+    }
+});
+test('Escape dismisses deletion and restores focus without a request',()=>{
+    const {p,ctx,nodes,sent}=dialogBrowser();p.dialog('node//a','delete',{path:'/x',name:'<img>'});
+    assert.ok(nodes.some(n=>n.textContent==='Delete <img>?'));
+    nodes.find(n=>n.tag==='dialog').events.cancel({preventDefault(){}});
+    assert.equal(sent.length,0);assert.equal(ctx.document.activeElement.focused,true);assert.equal(p.openDialog,null);
 });
