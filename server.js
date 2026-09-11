@@ -33,8 +33,10 @@ exports.create = function (parent, settings) {
             const saved = parent.pluginPermissionsCache && parent.pluginPermissionsCache.omniosfiles;
             if (saved) saved.defaults = Object.assign({read: 'denied', write: 'denied'}, saved.defaults);
             if (!parent.getPluginPermissions('omniosfiles')) return cb(false);
-            try { cb(parent.checkPluginPermission(user, 'omniosfiles', 'read', node._id, node.meshid) && (!write || parent.checkPluginPermission(user, 'omniosfiles', 'write', node._id, node.meshid))); }
-            catch (e) { cb(false); }
+            let permitted = false;
+            try { permitted = parent.checkPluginPermission(user, 'omniosfiles', 'read', node._id, node.meshid) && (!write || parent.checkPluginPermission(user, 'omniosfiles', 'write', node._id, node.meshid)); }
+            catch (e) { }
+            cb(permitted);
         });
     }
     function send(c, body) {

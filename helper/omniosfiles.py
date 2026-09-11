@@ -315,7 +315,10 @@ class Worker:
                     raise ValueError('Temporary file changed')
                 os.fchmod(t['fd'], 0o644)
                 rename_exclusive(t['parent'], t['temp'], t['parent'], t['name'])
-                os.fsync(t['parent'])
+                try:
+                    os.fsync(t['parent'])
+                except OSError as error:
+                    raise RuntimeError('File was published but directory sync failed; inspect destination before retrying') from error
             else:
                 st = os.fstat(t['fd'])
                 if t['snapshot'] != (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns):
