@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import os
+import stat
 from pathlib import Path
 import tempfile
 import time
@@ -36,6 +37,25 @@ class WorkerTests(unittest.TestCase):
         for i in range(0, len(data), 65536):
             self.call('uploadChunk', key, chunkIndex=i//65536, data=base64.b64encode(data[i:i+65536]).decode())
         return self.call('finishUpload', key, checksum=hashlib.sha256(data).hexdigest())
+
+    def test_created_modes_ignore_worker_umask_and_keep_staging_private(self):
+        for mask in (0o077, 0o022, 0o002):
+            with self.subTest(umask=oct(mask)):
+                previous = os.umask(mask)
+                try:
+                    folder = '/mode-' + str(mask)
+                    self.call('createDir', path=folder)
+                    self.assertEqual(stat.S_IMODE((self.root / folder[1:]).stat().st_mode), 0o775)
+                    self.call('startUpload', KEY, path=folder + '/test.file', totalSize=0)
+                    temp = self.root / folder[1:] / self.w.transfers[KEY]['temp']
+                    self.assertEqual(stat.S_IMODE(temp.stat().st_mode), 0o600)
+                    self.call('finishUpload', KEY, checksum=hashlib.sha256(b'').hexdigest())
+                    result = (self.root / folder[1:] / 'test.file').stat()
+                    self.assertEqual(stat.S_IMODE(result.st_mode), 0o664)
+                    self.assertEqual(result.st_uid, os.geteuid())
+                    self.assertEqual(result.st_gid, os.getegid())
+                finally:
+                    os.umask(previous)
 
     def test_basic_operations_and_root_mapping(self):
         self.call('createDir', path='/folder')
