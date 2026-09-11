@@ -259,7 +259,7 @@ class Worker:
                         raise ValueError('File exceeds the qualified size limit')
                     snapshot = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
                 self.transfers[key] = dict(fd=fd, parent=parent, name=name, path=path, temp=temp, upload=upload, total=total, offset=0, index=0, hash=hashlib.sha256(), time=time.monotonic(), snapshot=snapshot)
-                return dict(type='uploadReady' if upload else 'downloadStart', totalSize=total, fileName=name, chunkSize=CHUNK)
+                return dict(type='uploadReady' if upload else 'downloadStart', totalSize=total, fileName=name, chunkSize=CHUNK, transferId=key)
             except Exception:
                 if fd is not None:
                     os.close(fd)

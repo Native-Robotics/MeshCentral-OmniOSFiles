@@ -57,6 +57,11 @@ class WorkerTests(unittest.TestCase):
                 finally:
                     os.umask(previous)
 
+    def test_start_upload_and_download_echo_the_transfer_id(self):
+        self.assertEqual(self.call('startUpload', KEY, path='/new', totalSize=0)['transferId'], KEY)
+        self.call('finishUpload', KEY, checksum=hashlib.sha256(b'').hexdigest())
+        self.assertEqual(self.call('startDownload', KEY, path='/new')['transferId'], KEY)
+
     def test_basic_operations_and_root_mapping(self):
         self.call('createDir', path='/folder')
         self.assertEqual(self.call('listDir', path='/')['items'][0]['name'], 'folder')
