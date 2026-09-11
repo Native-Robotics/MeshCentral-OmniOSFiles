@@ -1,0 +1,35 @@
+'use strict';
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const path=require('path'),fs=require('fs');
+const source=process.env.MESHCENTRAL_SOURCE || path.resolve(__dirname,'../../MeshCentral');
+const coreFile=path.join(source,'pluginHandler.js');
+const server=require('../server');
+test('actual MeshCentral permission implementation denies missing defaults and honors explicit grants', {skip:!fs.existsSync(coreFile)},()=>{
+    const sent=[],user={_id:'user//u',links:{'mesh//m':{rights:0x408}}};
+    const ws={sessionId:'s',send:s=>sent.push(JSON.parse(s))};
+    const web={users:{[user._id]:user},wsagents:{},wssessions2:{s:ws},GetNodeWithRights(d,u,n,cb){cb({_id:n,meshid:'mesh//m'},0x408,true);}};
+    const parent={path,datapath:'/tmp/unused-omniosfiles-core-test',webserver:web,config:{settings:{plugins:{list:[]}}},db:{getPlugins(cb){cb(null,[]);}}};
+    const handler=require(coreFile).pluginHandler(parent);
+    const plugin=server.create(handler,server.settings({}));
+    const request=()=>plugin.serveraction({pluginaction:'capabilities',nodeid:'node//n',requestId:'r'},{ws,user,domain:{id:''}});
+    request();assert.equal(sent.at(-1).error,'Access denied');
+    handler.pluginPermissionsCache.omniosfiles={permissions:{}};
+    request();assert.equal(sent.at(-1).error,'Access denied');
+    handler.pluginPermissionsCache.omniosfiles.permissions.read={allowed:{users:[user._id]}};
+    request();assert.equal(sent.at(-1).data.read,true);assert.equal(sent.at(-1).data.write,false);
+    handler.pluginPermissionsCache.omniosfiles.permissions.write={allowed:{users:[user._id]}};
+    request();assert.equal(sent.at(-1).data.write,true);
+    user.siteadmin=0xffffffff;handler.pluginPermissionsCache.omniosfiles.permissions={};
+    request();assert.equal(sent.at(-1).data.write,true);
+});
+test('manual-list construction can register permissions after API initialization',()=>{
+    const sent=[],user={_id:'user//u'},ws={sessionId:'s',send:s=>sent.push(JSON.parse(s))};
+    const web={users:{[user._id]:user},wssessions2:{s:ws},GetNodeWithRights(d,u,n,cb){cb({_id:n},0x408,true);}};
+    const parent={parent:{webserver:web}},plugin=server.create(parent,server.settings({}));
+    let registered=0;
+    Object.assign(parent,{registerPermissions(){registered++;},getPluginPermissions(){return {};},checkPluginPermission(){return true;}});
+    plugin.server_startup();assert.equal(registered,1);
+    plugin.serveraction({pluginaction:'capabilities',nodeid:'node//n',requestId:'r'},{ws,user,domain:{id:''}});
+    assert.equal(sent[0].data.read,true);
+});
