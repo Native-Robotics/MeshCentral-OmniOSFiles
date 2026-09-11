@@ -13,9 +13,23 @@ Create, rename and delete use modal dialogs with keyboard focus, Enter to
 submit and Escape to cancel. Pending mutations disable further changes;
 errors and final transfer verification remain visible.
 
-For an upgrade **from rc.3 to rc.4**, reload the installed server plugin and
+For an upgrade **from rc.3/rc.4 to rc.5**, reload the installed server plugin and
 fully reload the browser page. Agent modules are unchanged; this UI update
 alone does not require rebuilding or distributing the agent core.
+
+The displayed installed version is metadata, not proof that the running browser
+exports were refreshed. If the old interface remains, run the same Reload
+command used by this MeshCentral fork's admin UI in the browser console:
+
+```js
+meshserver.send({action: 'reloadplugin', plugin: 'omniosfiles'});
+```
+
+Check the server log for `Plugin reloaded successfully: omniosfiles`, then
+fully reload the page. `meshserver.send()` returning `undefined` is normal;
+it does not report reload success. On the reloaded device page,
+`typeof pluginHandler.omniosfiles.dialog` and
+`typeof pluginHandler.omniosfiles.icon` should both be `"function"`.
 
 After deployment, verify light/night themes, narrow layouts and long names;
 create/rename/delete with Enter and Escape; upload/download and cancellation;

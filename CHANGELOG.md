@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.5]
+
+### Fixed
+
+- Coalesce repeated device refreshes while capabilities or the directory listing is pending, preserving active transfers.
+- Show directory unavailability instead of a stale item count after a listing failure.
+- Cover refresh and device-switch lifecycle regressions with browser tests.
+
 ## [2.0.0-rc.4]
 
 ### Changed
