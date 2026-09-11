@@ -43,6 +43,16 @@ test('serialized browser, actual server/auth/agent bridge and Python worker tran
     Object.assign(p,{nodes:{'node//test':{path:'/',caps:{write:true,maxFileSize:104857600},items:[]}},pending:{},transfers:{},sequence:0});
     p.render=()=>{};ctx.meshserver={send:m=>obj.serveraction(m,source)};
     try {
+        const mutate = async (action,args) => {
+            p.mutate('node//test',action,args);
+            await waitFor(()=>Object.keys(p.pending).length===0);
+            assert.equal(p.nodes['node//test'].operationError,null);
+        };
+        await mutate('createDir',{path:'/каталог'});
+        assert.equal(fs.statSync(path.join(root,'каталог')).mode&0o777,0o775);
+        await mutate('rename',{srcPath:'/каталог',dstPath:'/renamed'});
+        assert.equal(fs.existsSync(path.join(root,'каталог')),false);
+        assert.equal(fs.statSync(path.join(root,'renamed')).isDirectory(),true);
         const bytes=crypto.randomBytes(65537), file=new Blob([bytes]);file.name='test.bin';
         p.upload('node//test','/',file);
         await waitFor(()=>Object.keys(p.transfers).length===0);
@@ -53,6 +63,12 @@ test('serialized browser, actual server/auth/agent bridge and Python worker tran
         assert.match(p.nodes['node//test'].status,/Completed/);
         assert.deepEqual(Buffer.from(await blobs[0].arrayBuffer()),bytes);
         await waitFor(()=>Object.keys(p.pending).length===0);
+        assert.equal(fs.statSync(path.join(root,'test.bin')).mode&0o777,0o664);
+        await mutate('rename',{srcPath:'/test.bin',dstPath:'/renamed/test.bin'});
+        assert.deepEqual(fs.readFileSync(path.join(root,'renamed','test.bin')),bytes);
+        await mutate('delete',{path:'/renamed'});
+        assert.equal(fs.existsSync(path.join(root,'renamed')),false);
+        assert.deepEqual(Array.from(p.nodes['node//test'].items),[]);
     } finally {
         const closed=child&&once(child,'close');mesh.emit('Connected',0);if(closed)await closed;
         for(const e of Object.values(p.pending))clearTimeout(e.timer);
