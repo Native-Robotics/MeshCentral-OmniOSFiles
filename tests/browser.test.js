@@ -123,3 +123,24 @@ test('Escape dismisses deletion and restores focus without a request',()=>{
     nodes.find(n=>n.tag==='dialog').events.cancel({preventDefault(){}});
     assert.equal(sent.length,0);assert.equal(ctx.document.activeElement.focused,true);assert.equal(p.openDialog,null);
 });
+
+test('repeated device refresh coalesces capabilities and listing without losing transfers',()=>{
+    const {p,ctx,sent}=browser();ctx.pluginHandler.registerPluginTab=()=>{};
+    const transfer={id:'u',node:'node//a',offset:65536,total:131072};p.transfers.u=transfer;
+    p.onDeviceRefreshEnd();p.onDeviceRefreshEnd();
+    assert.equal(sent.length,1);assert.equal(sent[0].pluginaction,'capabilities');
+    p.result({}, {protocol:2,nodeid:'node//a',requestId:sent[0].requestId,data:{write:true}});
+    assert.equal(sent.length,2);assert.equal(sent[1].pluginaction,'listDir');
+    p.onDeviceRefreshEnd();p.onDeviceRefreshEnd();assert.equal(sent.length,2);
+    p.result({}, {protocol:2,nodeid:'node//a',requestId:sent[1].requestId,data:{path:'/',items:[]}});
+    assert.equal(p.transfers.u,transfer);assert.equal(transfer.offset,65536);
+    p.onDeviceRefreshEnd();assert.equal(sent.length,3);
+});
+test('switching devices closes the dialog and preserves the original transfer',()=>{
+    const {p,ctx,nodes}=dialogBrowser();ctx.pluginHandler.registerPluginTab=()=>{};
+    p.dialog('node//a','delete',{path:'/x',name:'x'});
+    const transfer={id:'u',node:'node//a',offset:1};p.transfers.u=transfer;
+    ctx.currentNode={_id:'node//b'};p.onDeviceRefreshEnd();
+    assert.equal(p.openDialog,null);assert.equal(nodes.find(n=>n.tag==='dialog').isConnected,false);
+    assert.equal(p.transfers.u,transfer);
+});
