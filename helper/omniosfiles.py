@@ -199,7 +199,14 @@ class Worker:
             fd, name = self.parent(src)
             try:
                 if action == 'createDir':
-                    os.mkdir(name, 0o755, dir_fd=fd)
+                    os.mkdir(name, 0o775, dir_fd=fd)
+                    # Keep the worker umask restrictive for temporary files, then set
+                    # the requested final mode on the newly opened directory itself.
+                    created = os.open(name, DIR, dir_fd=fd)
+                    try:
+                        os.fchmod(created, 0o775)
+                    finally:
+                        os.close(created)
                 elif action == 'delete':
                     # Explicit paths through symlinks are rejected; recursive deletion unlinks nested links.
                     if stat.S_ISLNK(os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode):
@@ -313,7 +320,7 @@ class Worker:
                 self.regular(st)
                 if st.st_size != t['total']:
                     raise ValueError('Temporary file changed')
-                os.fchmod(t['fd'], 0o644)
+                os.fchmod(t['fd'], 0o664)
                 rename_exclusive(t['parent'], t['temp'], t['parent'], t['name'])
                 try:
                     os.fsync(t['parent'])

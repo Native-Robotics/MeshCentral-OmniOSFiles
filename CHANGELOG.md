@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.3]
+
+### Fixed
+
+- Set new directory permissions to `0775` and completed upload permissions to `0664` as user:user, independently of the worker's restrictive umask.
+- Keep upload staging files private with mode `0600` until publication.
+
 ## [2.0.0-rc.2]
 
 ### Fixed
