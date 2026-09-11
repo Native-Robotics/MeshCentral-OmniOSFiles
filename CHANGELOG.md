@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.4]
+
+### Changed
+
+- Adapt the SVAR Willow table and toolbar styling to MeshCentral light/night themes, with local outline SVG icons and no runtime or CDN dependencies.
+- Replace browser prompts with keyboard-accessible dialogs for folder creation, rename and deletion.
+- Prevent repeated mutations and stale dialog submissions after device/path/permission changes; show mutation errors explicitly.
+- Preserve the originating upload directory while the file picker is open and display the final verification phase.
+
 ## [2.0.0-rc.3]
 
 ### Fixed
