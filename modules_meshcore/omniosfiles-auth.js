@@ -2,7 +2,7 @@
 // Challenges are sent only to the authenticated server, never the requesting tunnel.
 exports.create = function (send, execute, random) {
     var pending = {}, count = 0;
-    random = random || function () { return require('EncryptionStream').GenerateRandom(32).toString('hex'); };
+    random = random || function () { return require('EncryptionStream').GenerateRandom(32).toString('hex').toLowerCase(); };
     return function (args) {
         if (!args || typeof args.requestId !== 'string' || !/^[a-f0-9]{48}$/.test(args.requestId)) return;
         if (args.pluginaction === 'propose') {
