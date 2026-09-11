@@ -90,10 +90,21 @@ exports.create = function (parent, settings) {
         const agent = web.wsagents[c.nodeid];
         if (!agent || (t && t.agent !== agent)) { stop(t); return send(c, {error: 'Device is offline or reconnected'}); }
         if (jobs.size >= 128 || [...jobs.values()].filter(j => j.agent === agent).length >= 8 || (t && t.busy)) { if (t && !t.busy) stop(t); return send(c, {error: 'Device is busy'}); }
-        const j = {id: id(), c, agent, t, write};
+        const j = {id: id(), c, agent, t, write, phase: 'awaitingAgent'};
         j.payload = JSON.stringify({protocol: 2, action, args, transferId: t ? t.id : null, policy: settings});
         jobs.set(j.id, j); if (t) t.busy = true;
-        j.timer = setTimeout(function () { if (!jobs.has(j.id)) return; remove(j); stop(t); send(c, {error: 'Device request timed out; unfinished transfers expire on the device'}); }, 30000);
+        j.timer = setTimeout(function () {
+            if (!jobs.has(j.id)) return;
+            remove(j); stop(t);
+            const error = j.phase === 'awaitingAgent'
+                ? 'OmniOSFiles agent module did not respond. Rebuild and upload the default agent core, then reload this page.'
+                : j.phase === 'received'
+                    ? 'The agent received the request but did not complete authorization.'
+                    : j.phase === 'authorizing'
+                        ? 'The agent did not confirm server authorization.'
+                        : 'The file worker did not return a result; the operation may still be running.';
+            send(c, {error: error, stage: j.phase});
+        }, 30000);
         try { agent.send(JSON.stringify({action: 'plugin', plugin: 'omniosfiles', pluginaction: 'propose', requestId: j.id, payload: j.payload})); }
         catch (e) { remove(j); stop(t); send(c, {error: 'Cannot contact device'}); }
     }
@@ -101,9 +112,21 @@ exports.create = function (parent, settings) {
         if (web.wsagents[agent.dbNodeKey] !== agent) return;
         const j = jobs.get(cmd.requestId);
         if (!j || j.agent !== agent) return;
+        if (cmd.pluginaction === 'agentStatus') {
+            const phases = ['awaitingAgent', 'received', 'authorizing', 'executing'];
+            if (['received', 'executing'].includes(cmd.stage) && phases.indexOf(cmd.stage) > phases.indexOf(j.phase)) j.phase = cmd.stage;
+            return;
+        }
+        if (cmd.pluginaction === 'agentError') {
+            remove(j); stop(j.t);
+            access(j.c, j.write, function (ok) {
+                send(j.c, {error: ok ? 'OmniOSFiles agent: ' + String(cmd.error || 'Initialization failed').slice(0, 4096) : 'Access denied'});
+            });
+            return;
+        }
         if (cmd.pluginaction === 'authorize') {
             if (j.approved || cmd.payload !== j.payload || typeof cmd.challenge !== 'string' || !/^[a-f0-9]{64}$/.test(cmd.challenge)) return;
-            j.approved = true;
+            j.approved = true; j.phase = 'authorizing';
             access(j.c, j.write, function (ok) {
                 if (!jobs.has(j.id) || web.wsagents[j.c.nodeid] !== agent) return;
                 try { agent.send(JSON.stringify({action: 'plugin', plugin: 'omniosfiles', pluginaction: 'approve', requestId: j.id, challenge: cmd.challenge, allowed: ok})); } catch (e) { }
