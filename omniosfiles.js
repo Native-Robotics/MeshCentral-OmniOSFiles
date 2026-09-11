@@ -14,7 +14,7 @@ module.exports.omniosfiles = function (parent) {
         var state = p.nodes[node] || (p.nodes[node] = {path: '/', items: [], status: '', caps: null, loaded: false, listError: null});
         pluginHandler.registerPluginTab({tabId: 'omniosfiles', tabTitle: 'OmniOS Files'});
         p.render(node);
-        if (!state.checking) {
+        if (!state.checking && !state.listing) {
             state.checking = true;
             p.request(node, 'capabilities', {}, function (data, error) {
                 state.checking = false; state.caps = error ? null : data;
@@ -142,7 +142,7 @@ module.exports.omniosfiles = function (parent) {
         button('New folder', 'Create directory', function () {
             p.dialog(node, 'createDir', {path: state.path});
         }, !caps || !caps.write || active || !!state.listing || !!state.listError, bar);
-        element('span', state.listing ? 'Loading...' : state.status || (state.loaded ? state.items.length + ' items' : 'Checking access...'), bar, 'omniosfiles-status');
+        element('span', state.listing ? 'Loading...' : state.listError ? 'Directory unavailable' : state.status || (state.loaded ? state.items.length + ' items' : 'Checking access...'), bar, 'omniosfiles-status');
         var breadcrumb = element('div', undefined, panel, 'omniosfiles-breadcrumb');
         breadcrumb.appendChild(p.icon('folder')); link('/var/nr', '/', breadcrumb);
         var prefix = '';
