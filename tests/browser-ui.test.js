@@ -50,7 +50,22 @@ test('Chromium checks dialog keyboard navigation, theme contrast and narrow path
         assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'),true,'page must not overflow horizontally');
         await evaluate(`document.querySelector('[title="Delete"]').focus()`);
         assert.equal(await evaluate(`(()=>{const r=document.activeElement.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;})()`),true,'keyboard reveals scrolled actions');
+        if (process.env.OMNIOSFILES_SCREENSHOTS) {
+            const output=path.resolve(process.env.OMNIOSFILES_SCREENSHOTS);fs.mkdirSync(output,{recursive:true});
+            for(const theme of ['light','night'])for(const state of ['list','empty','error','transfer','dialog']) {
+                await evaluate(`document.body.className=${JSON.stringify(theme)};p.nodes.a.listError=null;p.transfers={};p.nodes.a.items=[{name:'Unicode <file> '+ 'я'.repeat(240),path:'/file.txt',size:10,mtime:0,supported:true}];`);
+                if(state==='empty')await evaluate('p.nodes.a.items=[]');
+                if(state==='error')await evaluate("p.nodes.a.listError='Device request timed out'");
+                if(state==='transfer')await evaluate("p.transfers.u={node:'a',name:'test.bin',upload:true,total:100,offset:42}");
+                await evaluate("p.render('a')");
+                if(state==='dialog')await evaluate("p.dialog('a','rename',{name:'file.txt',path:'/file.txt'})");
+                const shot=await send('Page.captureScreenshot',{format:'png'});
+                fs.writeFileSync(path.join(output,theme+'-'+state+'.png'),Buffer.from(shot.data,'base64'));
+                if(state==='dialog')await evaluate('p.openDialog.close()');
+            }
+        }
+
     } finally {
-        if(socket)socket.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r));fs.rmSync(dir,{recursive:true,force:true});
+        if(socket)socket.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r));fs.rmSync(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});
     }
 });

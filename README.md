@@ -150,3 +150,15 @@ contrast and narrow layouts with long paths. It requires a Node runtime with
 global `WebSocket` and Chrome at `/usr/bin/google-chrome`, or `CHROME_BINARY`.
 The test skips explicitly when these requirements are absent. It uses only
 a temporary local page and profile, without connecting to a deployed server.
+
+To save local visual samples for review (light/night themes, a long Unicode
+path, empty/error states, transfer progress and the rename dialog):
+
+```bash
+OMNIOSFILES_SCREENSHOTS=/tmp/omniosfiles-ui-review node --test tests/browser-ui.test.js
+```
+
+These screenshots use synthetic data in a narrow viewport; they are not
+evidence of deployed-device operation. The round-trip test separately checks
+create/rename/upload/download/delete and final filesystem modes through the
+server and agent bridge with a real Python worker in a temporary directory.
