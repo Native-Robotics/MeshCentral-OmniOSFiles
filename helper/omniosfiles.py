@@ -16,7 +16,8 @@ import sys
 import time
 import uuid
 
-CHUNK = 65536
+# Kept in sync with server.js's CHUNK -- see the comment there for why 16 KiB, not 64 KiB.
+CHUNK = 16384
 MAX_SIZE = 100 * 1024 * 1024
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 FILE = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
@@ -292,7 +293,7 @@ class Worker:
                         raise ValueError('Invalid chunk')
                     data = base64.b64decode(encoded, validate=True)
                     if len(data) != expected:
-                        raise ValueError('Unexpected chunk length')
+                        raise ValueError('Unexpected chunk length: index=' + str(args['chunkIndex']) + ', expected=' + str(expected) + ', actual=' + str(len(data)) + ', offset=' + str(t['offset']) + ', total=' + str(t['total']))
                     view = memoryview(data)
                     while view:
                         n = os.write(t['fd'], view)
@@ -312,8 +313,10 @@ class Worker:
                 return result
             if action not in ('finishUpload', 'finishDownload') or t['upload'] != (action == 'finishUpload'):
                 raise ValueError('Invalid transfer action')
-            if t['offset'] != t['total'] or args.get('checksum') != t['hash'].hexdigest():
-                raise ValueError('Size or SHA-256 mismatch')
+            if t['offset'] != t['total']:
+                raise ValueError('Size mismatch: received ' + str(t['offset']) + ', expected ' + str(t['total']))
+            if args.get('checksum') != t['hash'].hexdigest():
+                raise ValueError('SHA-256 mismatch after ' + str(t['offset']) + ' bytes')
             if t['upload']:
                 os.fsync(t['fd'])
                 st = os.fstat(t['fd'])
@@ -340,7 +343,12 @@ class Worker:
 
 def main():
     worker = None
+    exit_reason = 'exception'
+    processed = 0
+    buffer = b''
     def terminate(signum, frame):
+        nonlocal exit_reason
+        exit_reason = 'signal:' + str(signum)
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, terminate)
     try:
@@ -360,11 +368,13 @@ def main():
         while True:
             worker.expire()
             if not worker.transfers and time.monotonic() - last_activity > 120:
+                exit_reason = 'idle'
                 break
             if not select.select([sys.stdin], [], [], 1)[0]:
                 continue
             block = os.read(sys.stdin.fileno(), 65536)
             if not block:
+                exit_reason = 'stdin-eof'
                 break
             last_activity = time.monotonic()
             buffer += block
@@ -373,6 +383,7 @@ def main():
             while b'\n' in buffer:
                 line, buffer = buffer.split(b'\n', 1)
                 message = json.loads(line)
+                processed += 1
                 try:
                     result = worker.operate(message['payload'])
                 except Exception as e:
@@ -382,6 +393,7 @@ def main():
                     response = json.dumps(dict(id=message['id'], result=dict(type='error', error='Directory response too large')))
                 print(response, flush=True)
     finally:
+        print('omniosfiles-worker exit=' + exit_reason + ' processed=' + str(processed) + ' buffered=' + str(len(buffer)), file=sys.stderr, flush=True)
         if worker:
             worker.close()
 

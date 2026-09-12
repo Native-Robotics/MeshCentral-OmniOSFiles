@@ -66,6 +66,17 @@ test('Chromium checks dialog keyboard navigation, theme contrast and narrow path
         }
 
     } finally {
-        if(socket)socket.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r));fs.rmSync(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+        // Let Chrome close its profile before removing it; killing the launcher can
+        // leave a utility process writing Default/ after the launcher's exit.
+        if(socket && socket.readyState===WebSocket.OPEN) {
+            socket.send(JSON.stringify({id:1000000,method:'Browser.close'}));
+        } else child.kill();
+        await new Promise(resolve=>{
+            if(child.exitCode!==null || child.signalCode!==null)return resolve();
+            const timer=setTimeout(()=>child.kill(),2000);
+            child.once('exit',()=>{clearTimeout(timer);resolve();});
+        });
+        if(socket)socket.close();
+        await fs.promises.rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});
     }
 });

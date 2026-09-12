@@ -1,3 +1,6 @@
+import subprocess
+import sys
+import json
 import base64
 import hashlib
 import importlib.util
@@ -12,7 +15,7 @@ from unittest import mock
 spec = importlib.util.spec_from_file_location('worker', Path(__file__).parents[1] / 'helper/omniosfiles.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-POLICY = dict(maxFileSize=100*1024*1024, chunkSize=65536, maxConcurrentTransfers=3, filterMode='blacklist', allowedExtensions=[], blockedExtensions=['.exe'])
+POLICY = dict(maxFileSize=100*1024*1024, chunkSize=module.CHUNK, maxConcurrentTransfers=3, filterMode='blacklist', allowedExtensions=[], blockedExtensions=['.exe'])
 KEY = 'a'*48
 
 class WorkerTests(unittest.TestCase):
@@ -34,8 +37,8 @@ class WorkerTests(unittest.TestCase):
 
     def upload(self, name, data, key=KEY):
         self.call('startUpload', key, path=name, totalSize=len(data))
-        for i in range(0, len(data), 65536):
-            self.call('uploadChunk', key, chunkIndex=i//65536, data=base64.b64encode(data[i:i+65536]).decode())
+        for i in range(0, len(data), module.CHUNK):
+            self.call('uploadChunk', key, chunkIndex=i//module.CHUNK, data=base64.b64encode(data[i:i+module.CHUNK]).decode())
         return self.call('finishUpload', key, checksum=hashlib.sha256(data).hexdigest())
 
     def test_created_modes_ignore_worker_umask_and_keep_staging_private(self):
@@ -98,7 +101,7 @@ class WorkerTests(unittest.TestCase):
                 self.call('startDownload', KEY, path=path)
 
     def test_roundtrip_boundaries(self):
-        for size in (0, 1, 65536, 65537, 3*65536+7):
+        for size in (0, 1, module.CHUNK, module.CHUNK+1, 3*module.CHUNK+7):
             with self.subTest(size=size):
                 data = os.urandom(size)
                 name = '/f'+str(size)
@@ -106,7 +109,7 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual((self.root / name[1:]).read_bytes(), data)
                 self.call('startDownload', KEY, path=name)
                 downloaded = b''
-                for index in range((size+65535)//65536):
+                for index in range((size+module.CHUNK-1)//module.CHUNK):
                     downloaded += base64.b64decode(self.call('requestChunk', KEY, chunkIndex=index)['data'])
                 self.assertEqual(downloaded, data)
                 self.assertEqual(self.call('finishDownload', KEY, checksum=hashlib.sha256(data).hexdigest())['type'], 'downloadComplete')
@@ -189,8 +192,8 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse((self.outside / 'new').exists())
 
     def test_duplicate_chunk_aborts_without_publishing(self):
-        self.call('startUpload', KEY, path='/new', totalSize=65537)
-        data = base64.b64encode(b'x'*65536).decode()
+        self.call('startUpload', KEY, path='/new', totalSize=module.CHUNK+1)
+        data = base64.b64encode(b'x'*module.CHUNK).decode()
         self.call('uploadChunk', KEY, chunkIndex=0, data=data)
         with self.assertRaises(ValueError):
             self.call('uploadChunk', KEY, chunkIndex=0, data=data)
@@ -218,6 +221,34 @@ class WorkerTests(unittest.TestCase):
             self.call('startUpload', KEY, path='/new', totalSize=0)
             self.call('cancel', KEY)
         self.assertEqual(len(os.listdir('/proc/self/fd')), before)
+
+    def test_chunk_length_error_reports_expected_and_actual(self):
+        self.call('startUpload', KEY, path='/new', totalSize=1)
+        with self.assertRaisesRegex(ValueError, 'index=0, expected=1, actual=2, offset=0, total=1'):
+            self.call('uploadChunk', KEY, chunkIndex=0, data=base64.b64encode(b'ab').decode())
+        self.assertFalse((self.root / 'new').exists())
+        self.assertEqual(self.w.transfers, {})
+
+class WorkerExitTests(unittest.TestCase):
+    def test_eof_and_sigterm_report_reason_without_request_contents(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = (Path(__file__).parents[1] / 'helper/omniosfiles.py').read_text()
+            source = source.replace("if __name__ == '__main__':\n    main()", '')
+            source += "\nimport types\nOriginal=Worker\nWorker=lambda ignored: Original(" + repr(root) + ")\npwd.getpwnam=lambda name: types.SimpleNamespace(pw_uid=os.geteuid())\ngrp.getgrnam=lambda name: types.SimpleNamespace(gr_gid=os.getegid())\nmain()\n"
+            result = subprocess.run([sys.executable, '-I', '-u', '-c', source], input=b'private', capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn(b'exit=stdin-eof processed=0 buffered=7', result.stderr)
+            self.assertNotIn(b'private', result.stderr)
+            proc = subprocess.Popen([sys.executable, '-I', '-u', '-c', source], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                request = dict(id='1', payload=dict(protocol=2, action='listDir', args=dict(path='/'), policy=POLICY))
+                proc.stdin.write(json.dumps(request).encode()+b'\n');proc.stdin.flush()
+                self.assertIn(b'listDirResult', proc.stdout.readline())
+                proc.terminate()
+                _, error = proc.communicate(timeout=5)
+                self.assertIn(b'exit=signal:15 processed=1 buffered=0', error)
+            finally:
+                if proc.poll() is None: proc.kill(); proc.communicate()
 
 if __name__ == '__main__':
     unittest.main()

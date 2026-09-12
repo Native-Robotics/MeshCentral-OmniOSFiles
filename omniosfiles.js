@@ -4,7 +4,14 @@ module.exports.omniosfiles = function (parent) {
     var service = require('./server').create(parent, require('./server').settings(require('./config.json').settings));
     obj.serveraction = service.serveraction;
     obj.server_startup = service.server_startup;
-    obj.exports = ['onDeviceRefreshEnd', 'result', 'request', 'render', 'navigate', 'mutate', 'upload', 'download', 'uploadNext', 'downloadNext', 'finish', 'cancel', 'status', 'formatSize', 'icon', 'dialog', 'hash'];
+    obj.exports = ['onDeviceRefreshEnd', 'result', 'request', 'render', 'navigate', 'mutate', 'upload', 'download', 'uploadNext', 'downloadNext', 'finish', 'cancel', 'status', 'formatSize', 'icon', 'dialog', 'hash',
+        'tunnelStart', 'onTunnelStateChange', 'onTunnelData', 'onTunnelControl', 'onUploadAck', 'uploadPump', 'onDownloadChunk', 'uploadTunnelFinish', 'downloadTunnelFinish', 'armWatchdog', 'checkWatchdog', 'escapeChunk', 'debugLog'];
+    obj.debugLog = function (t) {
+        var p = pluginHandler.omniosfiles, caps = p.nodes[t.node] && p.nodes[t.node].caps;
+        if (!caps || !caps.debug) return;
+        var args = ['[omniosfiles]', t.id].concat(Array.prototype.slice.call(arguments, 1));
+        try { console.log.apply(console, args); } catch (e) {}
+    };
     obj.onDeviceRefreshEnd = function () {
         if (typeof currentNode === 'undefined' || !currentNode || !currentNode._id) return;
         var p = pluginHandler.omniosfiles;
@@ -271,7 +278,9 @@ module.exports.omniosfiles = function (parent) {
         p.transfers[id] = t;
         p.request(node, 'startUpload', {path: (path === '/' ? '' : path) + '/' + file.name, totalSize: file.size}, function (data, error) {
             if (error) { p.finish(t, error); return; }
-            t.started = true; p.uploadNext(t);
+            t.started = true;
+            if (t.total === 0) { p.uploadTunnelFinish(t); return; } // nothing to pump; skip opening a tunnel entirely
+            if (data && typeof data.transferId === 'string') { p.tunnelStart(t, data.transferId); } else { p.uploadNext(t); }
         }, id);
         p.render(node);
     };
@@ -297,7 +306,7 @@ module.exports.omniosfiles = function (parent) {
                 t.offset += bytes.length; t.index++; p.render(t.node); p.uploadNext(t);
             }, t.id);
         };
-        reader.readAsArrayBuffer(t.file.slice(t.offset, Math.min(t.offset + 65536, t.total)));
+        reader.readAsArrayBuffer(t.file.slice(t.offset, Math.min(t.offset + 16384, t.total)));
     };
     obj.download = function (node, item) {
         var p = pluginHandler.omniosfiles, caps = p.nodes[node].caps;
@@ -311,7 +320,9 @@ module.exports.omniosfiles = function (parent) {
                 if (error) { p.finish(t, error); return; }
                 t.started = true;
                 if (!Number.isSafeInteger(data.totalSize) || data.totalSize < 0 || data.totalSize > caps.maxFileSize) { p.finish(t, 'Invalid file size'); return; }
-                t.total = data.totalSize; p.downloadNext(t);
+                t.total = data.totalSize;
+                if (t.total === 0) { p.downloadTunnelFinish(t); return; } // nothing to pump; skip opening a tunnel entirely
+                if (typeof data.transferId === 'string') { p.tunnelStart(t, data.transferId); } else { p.downloadNext(t); }
             }, t.id);
         }
         // Request the picker synchronously during the user's click gesture.
@@ -339,7 +350,7 @@ module.exports.omniosfiles = function (parent) {
             if (error) { p.finish(t, error); return; }
             try {
                 var text = atob(data.data), bytes = new Uint8Array(text.length);
-                if (data.chunkIndex !== t.index || text.length !== Math.min(65536, t.total - t.offset)) throw Error('Invalid download chunk');
+                if (data.chunkIndex !== t.index || text.length !== Math.min(16384, t.total - t.offset)) throw Error('Invalid download chunk');
                 for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
                 t.hash.update(bytes);
                 var save = t.writer ? t.writer.write(bytes) : Promise.resolve(t.chunks.push(bytes));
@@ -347,10 +358,134 @@ module.exports.omniosfiles = function (parent) {
             } catch (e) { p.finish(t, e.message); }
         }, t.id);
     };
+    // Protocol 3: chunks travel over a dedicated agent tunnel (protocol 7) instead of the
+    // startUpload/startDownload/finishUpload/finishDownload/cancel control channel above, which
+    // stays unchanged. See docs/PROTOCOL.md. Every helper below must call siblings through
+    // `p.name(...)`, never by closing over them directly -- each exported function is
+    // serialized on its own and re-evaluated in the target context.
+    obj.escapeChunk = function (bytes) {
+        if (!bytes.length || (bytes[0] !== 0 && bytes[0] !== 123)) return bytes;
+        var out = new Uint8Array(bytes.length + 1); out[0] = 0; out.set(bytes, 1); return out;
+    };
+    obj.armWatchdog = function (t) {
+        var p = pluginHandler.omniosfiles;
+        t.lastActivity = Date.now();
+        if (t.watchdog) clearTimeout(t.watchdog);
+        t.watchdog = setTimeout(function () { p.checkWatchdog(t); }, 60000);
+    };
+    obj.checkWatchdog = function (t) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t) return;
+        if (Date.now() - t.lastActivity >= 60000) { p.debugLog(t, 'watchdog: stalled, bound=' + t.bound); p.finish(t, 'Transfer stalled; no response from the device'); return; }
+        p.armWatchdog(t);
+    };
+    obj.tunnelStart = function (t, transferId) {
+        var p = pluginHandler.omniosfiles;
+        t.transferId = transferId; t.bound = false; t.reading = false; t.finishing = false;
+        if (t.upload) { t.sent = 0; t.sentIndex = 0; }
+        p.debugLog(t, 'tunnelStart', transferId);
+        var module = {
+            protocol: 7,
+            xxStateChange: function (state) { p.onTunnelStateChange(t, state); },
+            ProcessData: function () {},
+            ProcessBinaryData: function (bytes) { p.onTunnelData(t, bytes); }
+        };
+        t.redirect = CreateAgentRedirect(meshserver, module, serverPublicNamePort, authCookie, authRelayCookie, domainUrl);
+        p.armWatchdog(t);
+        t.redirect.Start(t.node);
+    };
+    obj.onTunnelStateChange = function (t, state) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t) return;
+        p.debugLog(t, 'tunnel state', state);
+        if (state === 3) {
+            try { t.redirect.sendText(JSON.stringify({action: 'plugin', plugin: 'omniosfiles', pluginaction: 'bindTransfer', transferId: t.transferId})); }
+            catch (e) { p.finish(t, 'Connection failed'); }
+            return;
+        }
+        if (state === 0 && !t.finishing) { p.finish(t, t.bound ? 'Connection to the device was lost' : 'Could not open a connection to the device'); }
+    };
+    obj.onTunnelData = function (t, bytes) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t || !bytes || bytes.length === 0) return;
+        if (bytes[0] === 123) {
+            var msg; try { msg = JSON.parse(String.fromCharCode.apply(null, bytes)); } catch (e) { return; }
+            p.onTunnelControl(t, msg);
+            return;
+        }
+        if (t.upload) return; // the tunnel never carries raw data toward an upload's own agent
+        p.onDownloadChunk(t, bytes[0] === 0 ? bytes.subarray(1) : bytes);
+    };
+    obj.onTunnelControl = function (t, msg) {
+        var p = pluginHandler.omniosfiles;
+        p.armWatchdog(t);
+        p.debugLog(t, 'tunnel control', msg.pluginaction, msg.error || '');
+        if (msg.pluginaction === 'bound') { t.bound = true; if (t.upload) p.uploadPump(t); return; }
+        if (msg.pluginaction === 'bindError') { p.finish(t, msg.error || 'Could not start the transfer'); return; }
+        if (msg.pluginaction === 'tunnelError') { p.finish(t, msg.error || 'Transfer failed'); return; }
+        if (msg.pluginaction === 'chunkAck' && t.upload) { p.onUploadAck(t); }
+    };
+    obj.onUploadAck = function (t) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t) return;
+        t.offset = Math.min(t.offset + 16384, t.total); t.index++;
+        p.render(t.node);
+        if (t.offset === t.total) { p.uploadTunnelFinish(t); return; }
+        p.uploadPump(t);
+    };
+    obj.uploadPump = function (t) {
+        var p = pluginHandler.omniosfiles;
+        if (p.transfers[t.id] !== t || t.cancelling || !t.bound || t.reading || t.sent === t.total) return;
+        if (t.sentIndex - t.index >= 8) return; // 8-chunk pipelining window, mirrors core's own Files tab
+        t.reading = true;
+        var reader = new FileReader();
+        reader.onerror = function () { t.reading = false; p.finish(t, 'Cannot read local file'); };
+        reader.onload = function () {
+            t.reading = false;
+            if (p.transfers[t.id] !== t) return;
+            if (t.cancelling) { p.cancel(t.id); return; }
+            var bytes = new Uint8Array(reader.result);
+            t.hash.update(bytes);
+            try { t.redirect.send(p.escapeChunk(bytes)); } catch (e) { p.finish(t, 'Connection failed'); return; }
+            t.sent += bytes.length; t.sentIndex++;
+            p.uploadPump(t);
+        };
+        reader.readAsArrayBuffer(t.file.slice(t.sent, Math.min(t.sent + 16384, t.total)));
+    };
+    obj.onDownloadChunk = function (t, bytes) {
+        var p = pluginHandler.omniosfiles;
+        t.hash.update(bytes);
+        var save = t.writer ? t.writer.write(bytes) : Promise.resolve(t.chunks.push(bytes));
+        save.then(function () {
+            if (p.transfers[t.id] !== t) return;
+            t.offset += bytes.length; t.index++; p.render(t.node);
+            try { t.redirect.sendText(JSON.stringify({action: 'plugin', plugin: 'omniosfiles', pluginaction: 'chunkAck'})); } catch (e) {}
+            if (t.offset === t.total) p.downloadTunnelFinish(t);
+        }).catch(function () { p.finish(t, 'Cannot write download'); });
+    };
+    obj.uploadTunnelFinish = function (t) {
+        var p = pluginHandler.omniosfiles;
+        p.request(t.node, 'finishUpload', {checksum: t.hash.digest()}, function (data, error) { p.finish(t, error); }, t.id);
+    };
+    obj.downloadTunnelFinish = function (t) {
+        var p = pluginHandler.omniosfiles;
+        p.request(t.node, 'finishDownload', {checksum: t.hash.digest()}, function (data, error) {
+            if (error) { p.finish(t, error); return; }
+            if (t.writer) t.writer.close().then(function () { t.writer = null; p.finish(t); }).catch(function () { p.finish(t, 'Cannot save download'); });
+            else {
+                var url = URL.createObjectURL(new Blob(t.chunks, {type: 'application/octet-stream'}));
+                var a = document.createElement('a'); a.href = url; a.download = t.name; document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 1000); p.finish(t);
+            }
+        }, t.id);
+    };
     obj.finish = function (t, error) {
         var p = pluginHandler.omniosfiles;
         if (p.transfers[t.id] !== t) return;
+        p.debugLog(t, 'finish', error || 'ok');
         delete p.transfers[t.id];
+        if (t.watchdog) clearTimeout(t.watchdog);
+        if (t.redirect) { t.finishing = true; try { t.redirect.Stop(); } catch (e) {} t.redirect = null; }
         if (t.writer) t.writer.abort().catch(function () {});
         if (error && t.started && !p.pending[t.id]) p.request(t.node, 'cancel', {}, function () {}, t.id);
         p.status(t.node, error || 'Completed: ' + t.name);
@@ -360,7 +495,7 @@ module.exports.omniosfiles = function (parent) {
         var p = pluginHandler.omniosfiles, t = p.transfers[id];
         if (!t) return;
         t.cancelling = true; p.render(t.node);
-        if (p.pending[id] || t.reader) return;
+        if (p.pending[id] || t.reader || t.reading) return;
         if (!t.started) { p.finish(t, 'Cancelled before transfer'); return; }
         p.request(t.node, 'cancel', {}, function (data, error) { t.started = false; p.finish(t, error || 'Cancelled'); }, id);
     };
