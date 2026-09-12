@@ -22,10 +22,25 @@ function setup(options = {}) {
     const agent = {dbNodeKey: 'node//n', send(s) { const m = JSON.parse(s); wire.push(m); if (!options.hold) guard(m); }};
     const guard = context.exports.create(m => service.serveraction(m, agent), (p, reply) => { executed.push(p); reply({type: 'listDirResult', items: []}); }, () => 'b'.repeat(64));
     web.wsagents[agent.dbNodeKey] = agent;
-    service = implementation.create(parent, server.settings({}));
+    service = implementation.create(parent, server.settings(options.settings || {}));
     function request(extra = {}) { service.serveraction(Object.assign({pluginaction: 'listDir', nodeid: agent.dbNodeKey, requestId: 'client', path: '/'}, extra), source); }
     return {sent, wire, executed, request, service, agent, source, web, parent, guard, timers, jobTimers, rights(r, w, v = true) {read = r; write = w; visible = v;}};
 }
+test('a webserver assigned only after plugin construction (server-startup race) is not frozen as null forever', () => {
+    // Reproduces a real deployment failure: core can construct plugins before
+    // parent.parent.webserver exists yet. Capturing it once at construction time froze every
+    // later request behind "Cannot read properties of null (reading 'wssessions2')" until the
+    // next manual reloadplugin -- on every full server restart, not just the first.
+    const sent = [];
+    const ws = {sessionId: 'own', send: s => sent.push(JSON.parse(s))};
+    const user = {_id: 'user//u'}, source = {ws, user, domain: {id: ''}};
+    const web = {users: {[user._id]: user}, wsagents: {}, wssessions2: {own: ws}, GetNodeWithRights(d, u, n, cb) { cb({_id: n, meshid: 'mesh//m'}, 0x408, true); }};
+    const parent = {parent: {webserver: null}, pluginPermissionsCache: {}, registerPermissions() {}, getPluginPermissions() { return {}; }, checkPluginPermission() { return true; }};
+    const service = server.create(parent, server.settings({}));
+    parent.parent.webserver = web; // core finishes constructing the webserver shortly after
+    assert.doesNotThrow(() => service.serveraction({pluginaction: 'capabilities', nodeid: 'node//n', requestId: 'client'}, source));
+    assert.equal(sent[0].data.type, 'capabilities');
+});
 test('No Files does not block separately authorized reads; sessions and IDs are server-owned', () => {
     const h = setup(); h.request({sessionid: 'victim'});
     assert.equal(h.executed.length, 1); assert.equal(h.sent[0].requestId, 'client');
@@ -59,6 +74,15 @@ test('request schema rejects oversized, negative, traversal and disguised upload
     const h = setup(); for (const size of [-1, 1.5, 200 * 1024 * 1024]) h.request({pluginaction: 'startUpload', totalSize: size});
     h.request({path: '/../outside'}); assert.equal(h.executed.length, 0);
     assert.throws(() => server.settings({maxFileSize: 3221225472}));
+});
+test('the debug setting validates as a boolean and is off by default, surfaced through capabilities', () => {
+    assert.throws(() => server.settings({debug: 'yes'}));
+    assert.equal(server.settings({}).debug, false);
+    assert.equal(server.settings({debug: true}).debug, true);
+    const h = setup(); h.request({pluginaction: 'capabilities'});
+    assert.equal(h.sent[0].data.debug, false);
+    const hDebug = setup({settings: {debug: true}}); hDebug.request({pluginaction: 'capabilities'});
+    assert.equal(hDebug.sent[0].data.debug, true);
 });
 test('unknown transfer cannot be continued or cancelled', () => {
     const h = setup(); h.request({pluginaction: 'uploadChunk', chunkIndex: 0, data: 'YQ=='}); h.request({pluginaction: 'cancel'});
@@ -110,6 +134,30 @@ test('agent initialization failures return immediately without granting file exe
     const h=setup({hold:true,fakeClock:true});h.request();const requestId=h.wire[0].requestId;
     h.service.serveraction({pluginaction:'agentError',requestId,error:'Secure random generator failed'},h.agent);
     assert.match(h.sent[0].error,/Secure random generator/);assert.equal(h.jobTimers.size,0);assert.equal(h.executed.length,0);
+});
+test('transferHeartbeat refreshes the idle timer and aborts the transfer when permission is revoked', () => {
+    const h = setup({fakeClock: true});
+    h.request({pluginaction: 'startUpload', totalSize: 0, path: '/file'});
+    const transferId = h.executed[0].transferId;
+    const originalTouch = [...h.jobTimers].find(t => t.ms === 120000);
+    h.wire.length = 0;
+    h.service.serveraction({pluginaction: 'transferHeartbeat', transferId}, h.agent);
+    const refreshedTouch = [...h.jobTimers].find(t => t.ms === 120000);
+    assert.notEqual(refreshedTouch, originalTouch); assert.equal(h.wire.length, 0);
+    h.rights(true, false);
+    h.service.serveraction({pluginaction: 'transferHeartbeat', transferId}, h.agent);
+    assert.equal(h.wire.length, 1); assert.equal(h.wire[0].pluginaction, 'abortTransfer'); assert.equal(h.wire[0].transferId, transferId);
+    h.service.serveraction({pluginaction: 'transferHeartbeat', transferId}, h.agent);
+    assert.equal(h.wire.length, 1);
+});
+test('transferHeartbeat from an unknown or replaced agent is ignored', () => {
+    const h = setup();
+    h.request({pluginaction: 'startUpload', totalSize: 0, path: '/file'});
+    const transferId = h.executed[0].transferId;
+    h.wire.length = 0;
+    h.service.serveraction({pluginaction: 'transferHeartbeat', transferId: 'unknown'}, h.agent);
+    h.service.serveraction({pluginaction: 'transferHeartbeat', transferId}, {dbNodeKey: h.agent.dbNodeKey, send() {}});
+    assert.equal(h.wire.length, 0);
 });
 test('timeouts distinguish module receipt from worker execution', () => {
     for(const stage of ['received','executing']) {
